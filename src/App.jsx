@@ -21,6 +21,10 @@ import {
   ThumbsDown,
   TrendingUp,
   ArrowRight,
+  Bell,
+  Mail,
+  Phone,
+  Lock,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -130,6 +134,7 @@ const TABS = [
   { id: "zonas", label: "Montos y Zonas", icon: MapPin },
   { id: "precios", label: "Precios Base", icon: DollarSign },
   { id: "horarios", label: "Horarios", icon: Clock },
+  { id: "notificaciones", label: "Notificaciones", icon: Bell },
 ];
 
 const TABS_ANALISIS = [
@@ -339,13 +344,16 @@ export default function App() {
   const [prices, setPrices] = useState(guardado?.prices ?? DEFAULT_PRICES);
   const [horarios, setHorarios] = useState(guardado?.horarios ?? ["08:00", "13:00", "18:30"]);
   const [sensitivity, setSensitivity] = useState(guardado?.sensitivity ?? 62);
+  const [socios, setSocios] = useState(
+    guardado?.socios ?? [{ nombre: "Bryan", email: "sigpallicitaciones@gmail.com", whatsapp: "" }]
+  );
   const [newHorario, setNewHorario] = useState("");
   const [savedFlash, setSavedFlash] = useState(false);
 
   // Guarda automáticamente cada vez que cambia cualquier parte de la configuración
   useEffect(() => {
-    guardarConfig({ categories, regions, prices, horarios, sensitivity });
-  }, [categories, regions, prices, horarios, sensitivity]);
+    guardarConfig({ categories, regions, prices, horarios, sensitivity, socios });
+  }, [categories, regions, prices, horarios, sensitivity, socios]);
 
   const flashSave = () => {
     setSavedFlash(true);
@@ -370,6 +378,41 @@ export default function App() {
     );
   };
 
+  const addCategory = () => {
+    const nombre = window.prompt("Nombre del nuevo rubro (ej. Mantención Industrial):");
+    if (!nombre || !nombre.trim()) return;
+    const id = nombre.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now();
+    setCategories((cs) => [
+      ...cs,
+      {
+        id,
+        name: nombre.trim(),
+        icon: "Wrench",
+        active: true,
+        montoMin: 5,
+        montoMax: 1000,
+        keywords: [],
+      },
+    ]);
+  };
+
+  const removeCategory = (id) => {
+    if (!window.confirm("¿Eliminar este rubro? Se perderán sus palabras clave.")) return;
+    setCategories((cs) => cs.filter((c) => c.id !== id));
+  };
+
+  const addSocio = () => {
+    setSocios((s) => [...s, { nombre: "", email: "", whatsapp: "" }]);
+  };
+
+  const updateSocio = (index, field, value) => {
+    setSocios((s) => s.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
+  };
+
+  const removeSocio = (index) => {
+    setSocios((s) => s.filter((_, i) => i !== index));
+  };
+
   const toggleRegion = (r) =>
     setRegions((rs) => (rs.includes(r) ? rs.filter((x) => x !== r) : [...rs, r]));
 
@@ -391,6 +434,119 @@ export default function App() {
 
   const sensitivityLabel =
     sensitivity < 34 ? "AMPLIO" : sensitivity < 67 ? "MEDIO" : "ESTRICTO";
+
+  // --- Protección con clave compartida ------------------------------------
+  const [unlocked, setUnlocked] = useState(
+    () => sessionStorage.getItem("sigpal-unlocked") === "true"
+  );
+  const [claveInput, setClaveInput] = useState("");
+  const [claveError, setClaveError] = useState(false);
+  const CLAVE_ACCESO = "sigpal2026"; // <-- cambia esto por la clave que acuerden los 3 socios
+
+  const intentarDesbloquear = (e) => {
+    e.preventDefault();
+    if (claveInput === CLAVE_ACCESO) {
+      sessionStorage.setItem("sigpal-unlocked", "true");
+      setUnlocked(true);
+      setClaveError(false);
+    } else {
+      setClaveError(true);
+    }
+  };
+
+  if (!unlocked) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: C.bg,
+          color: C.text,
+          fontFamily: "Inter, sans-serif",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 20,
+        }}
+      >
+        <style>{FONTS}</style>
+        <form
+          onSubmit={intentarDesbloquear}
+          style={{
+            width: "100%",
+            maxWidth: 340,
+            background: C.panel,
+            border: `1px solid ${C.lineSoft}`,
+            borderRadius: 8,
+            padding: 28,
+            textAlign: "center",
+          }}
+        >
+          <div
+            style={{
+              width: 44,
+              height: 44,
+              margin: "0 auto 16px",
+              borderRadius: 8,
+              background: C.raised,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Lock size={20} color={C.amber} />
+          </div>
+          <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 20, fontWeight: 600, marginBottom: 6 }}>
+            Panel de Sigpal
+          </div>
+          <div style={{ fontSize: 12.5, color: C.textMute, marginBottom: 18 }}>
+            Ingresa la clave compartida entre los socios para continuar.
+          </div>
+          <input
+            type="password"
+            autoFocus
+            value={claveInput}
+            onChange={(e) => {
+              setClaveInput(e.target.value);
+              setClaveError(false);
+            }}
+            placeholder="Clave de acceso"
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              background: C.panelAlt,
+              border: `1px solid ${claveError ? C.red : C.lineSoft}`,
+              borderRadius: 6,
+              padding: "10px 12px",
+              fontSize: 14,
+              color: C.text,
+              outline: "none",
+              marginBottom: 10,
+              textAlign: "center",
+            }}
+          />
+          {claveError && (
+            <div style={{ fontSize: 12, color: C.red, marginBottom: 10 }}>Clave incorrecta.</div>
+          )}
+          <button
+            type="submit"
+            style={{
+              width: "100%",
+              padding: "10px",
+              borderRadius: 6,
+              border: `1px solid ${C.amberDim}`,
+              background: "#2E2412",
+              color: C.amber,
+              fontSize: 13.5,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Entrar
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -712,18 +868,39 @@ export default function App() {
         {/* ---------------------------------------------------- RUBROS TAB */}
         {tab === "rubros" && (
           <div>
-            <div style={{ marginBottom: 18 }}>
-              <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 22, fontWeight: 600 }}>
-                Rubros y palabras clave
+            <div style={{ marginBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 22, fontWeight: 600 }}>
+                  Rubros y palabras clave
+                </div>
+                <div style={{ fontSize: 13, color: C.textMute, marginTop: 3 }}>
+                  Activa o desactiva rubros y ajusta las palabras que el bot busca en cada licitación.
+                </div>
               </div>
-              <div style={{ fontSize: 13, color: C.textMute, marginTop: 3 }}>
-                Activa o desactiva rubros y ajusta las palabras que el bot busca en cada licitación.
-              </div>
+              <button
+                onClick={addCategory}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "9px 14px",
+                  borderRadius: 6,
+                  border: `1px solid ${C.amberDim}`,
+                  background: "#2E2412",
+                  color: C.amber,
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <Plus size={14} /> Agregar rubro
+              </button>
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {categories.map((cat) => {
-                const Icon = ICONS[cat.icon];
+                const Icon = ICONS[cat.icon] || Wrench;
                 return (
                   <div
                     key={cat.id}
@@ -754,7 +931,15 @@ export default function App() {
                         </div>
                         <span style={{ fontSize: 14.5, fontWeight: 600 }}>{cat.name}</span>
                       </div>
-                      <Toggle on={cat.active} onClick={() => toggleCategory(cat.id)} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <Toggle on={cat.active} onClick={() => toggleCategory(cat.id)} />
+                        <X
+                          size={15}
+                          color={C.textFaint}
+                          style={{ cursor: "pointer" }}
+                          onClick={() => removeCategory(cat.id)}
+                        />
+                      </div>
                     </div>
 
                     <FieldLabel>Palabras clave</FieldLabel>
@@ -1102,6 +1287,104 @@ export default function App() {
             <SectionNote>
               Estas ventanas horarias son las que después configuraremos como tareas programadas (cron)
               para que el bot entre, revise, y te notifique — sin quedar conectado todo el día.
+            </SectionNote>
+          </div>
+        )}
+
+        {/* ----------------------------------------------- NOTIFICACIONES TAB */}
+        {tab === "notificaciones" && (
+          <div>
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 22, fontWeight: 600 }}>
+                Socios y notificaciones
+              </div>
+              <div style={{ fontSize: 13, color: C.textMute, marginTop: 3 }}>
+                A quién le llegan los avisos cuando el bot encuentra una oportunidad. Cada socio puede
+                recibirlo por correo, WhatsApp, o ambos.
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {socios.map((s, i) => (
+                <div
+                  key={i}
+                  style={{
+                    background: C.panel,
+                    border: `1px solid ${C.lineSoft}`,
+                    borderLeft: `3px solid ${C.cyan}`,
+                    borderRadius: 6,
+                    padding: 16,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                    <input
+                      value={s.nombre}
+                      onChange={(e) => updateSocio(i, "nombre", e.target.value)}
+                      placeholder="Nombre del socio"
+                      style={{ ...inputStyle(220), fontWeight: 600, fontSize: 14 }}
+                    />
+                    <X
+                      size={15}
+                      color={C.textFaint}
+                      style={{ cursor: "pointer" }}
+                      onClick={() => removeSocio(i)}
+                    />
+                  </div>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                    <div style={{ flex: 1, minWidth: 200 }}>
+                      <FieldLabel>
+                        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          <Mail size={11} /> Correo
+                        </span>
+                      </FieldLabel>
+                      <input
+                        value={s.email}
+                        onChange={(e) => updateSocio(i, "email", e.target.value)}
+                        placeholder="correo@ejemplo.com"
+                        style={inputStyle("100%")}
+                      />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 200 }}>
+                      <FieldLabel>
+                        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          <Phone size={11} /> WhatsApp (con código de país)
+                        </span>
+                      </FieldLabel>
+                      <input
+                        value={s.whatsapp}
+                        onChange={(e) => updateSocio(i, "whatsapp", e.target.value)}
+                        placeholder="+56 9 1234 5678"
+                        style={inputStyle("100%")}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              <button
+                onClick={addSocio}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  padding: "12px",
+                  borderRadius: 6,
+                  border: `1px dashed ${C.line}`,
+                  background: "transparent",
+                  color: C.textMute,
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                <Plus size={14} /> Agregar socio
+              </button>
+            </div>
+
+            <SectionNote>
+              El envío por correo ya está conectado y funcionando (vía Gmail). El envío por WhatsApp
+              todavía es un paso pendiente de configurar (requiere WhatsApp Business API) — por ahora
+              estos números quedan guardados aquí, listos para cuando conectemos ese canal.
             </SectionNote>
           </div>
         )}
