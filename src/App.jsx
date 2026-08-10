@@ -371,6 +371,7 @@ export default function App() {
       config: {
         sensibilidad: sensitivity,
         regiones: regions,
+        horarios: horarios,
         categorias: categories.map((c) => ({
           id: c.id,
           nombre: c.name,
