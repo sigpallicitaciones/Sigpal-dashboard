@@ -360,9 +360,31 @@ export default function App() {
   }, [categories, regions, prices, horarios, sensitivity, socios]);
 
   const flashSave = () => {
-    setSavedFlash(true);
-    setTimeout(() => setSavedFlash(false), 1600);
-  };
+  setSavedFlash(true);
+  setTimeout(() => setSavedFlash(false), 1600);
+
+  // Envía la configuración al bot en GitHub, para que quede sincronizada
+  fetch("/api/guardar-config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      config: {
+        sensibilidad: sensitivity,
+        regiones: regions,
+        categorias: categories.map((c) => ({
+          id: c.id,
+          nombre: c.name,
+          activo: c.active,
+          monto_min_utm: c.montoMin,
+          monto_max_utm: c.montoMax,
+          keywords: c.keywords,
+        })),
+      },
+    }),
+  }).catch((err) => {
+    console.error("No se pudo sincronizar con GitHub:", err);
+  });
+};
 
   const toggleCategory = (id) =>
     setCategories((cs) => cs.map((c) => (c.id === id ? { ...c, active: !c.active } : c)));
