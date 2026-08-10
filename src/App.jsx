@@ -25,6 +25,9 @@ import {
   Mail,
   Phone,
   Lock,
+  Search,
+  Calendar,
+  Loader2,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -138,6 +141,7 @@ const TABS = [
 ];
 
 const TABS_ANALISIS = [
+  { id: "busqueda", label: "Búsqueda manual", icon: Search },
   { id: "historial", label: "Historial", icon: History },
   { id: "sugerencias", label: "Sugerencias", icon: Lightbulb },
 ];
@@ -411,6 +415,39 @@ export default function App() {
 
   const removeSocio = (index) => {
     setSocios((s) => s.filter((_, i) => i !== index));
+  };
+
+  // --- Búsqueda manual (dispara el bot en GitHub Actions) -----------------
+  const [fechaBusqueda, setFechaBusqueda] = useState("");
+  const [buscando, setBuscando] = useState(false);
+  const [resultadoBusqueda, setResultadoBusqueda] = useState(null); // { ok, mensaje }
+
+  const dispararBusqueda = async () => {
+    setBuscando(true);
+    setResultadoBusqueda(null);
+    try {
+      const fechaFormateada = fechaBusqueda
+        ? fechaBusqueda.split("-").reverse().join("") // yyyy-mm-dd -> ddmmaaaa
+        : "";
+      const resp = await fetch("/api/buscar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fecha: fechaFormateada }),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        setResultadoBusqueda({
+          ok: true,
+          mensaje: `Búsqueda lanzada para ${data.fecha === "hoy" ? "hoy" : fechaBusqueda}. Revisa la pestaña "Actions" en GitHub en 1-2 minutos, o tu correo si encuentra algo.`,
+        });
+      } else {
+        setResultadoBusqueda({ ok: false, mensaje: data.error || "Error desconocido." });
+      }
+    } catch (err) {
+      setResultadoBusqueda({ ok: false, mensaje: "No se pudo contactar al servidor: " + String(err) });
+    } finally {
+      setBuscando(false);
+    }
   };
 
   const toggleRegion = (r) =>
@@ -1385,6 +1422,100 @@ export default function App() {
               El envío por correo ya está conectado y funcionando (vía Gmail). El envío por WhatsApp
               todavía es un paso pendiente de configurar (requiere WhatsApp Business API) — por ahora
               estos números quedan guardados aquí, listos para cuando conectemos ese canal.
+            </SectionNote>
+          </div>
+        )}
+
+        {/* --------------------------------------------------- BÚSQUEDA TAB */}
+        {tab === "busqueda" && (
+          <div>
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 22, fontWeight: 600 }}>
+                Búsqueda manual por fecha
+              </div>
+              <div style={{ fontSize: 13, color: C.textMute, marginTop: 3 }}>
+                Lanza al bot ahora mismo para que revise un día específico, en vez de esperar a las
+                ventanas horarias automáticas.
+              </div>
+            </div>
+
+            <div
+              style={{
+                background: C.panel,
+                border: `1px solid ${C.lineSoft}`,
+                borderRadius: 6,
+                padding: 20,
+                maxWidth: 420,
+              }}
+            >
+              <FieldLabel>
+                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <Calendar size={11} /> Fecha a revisar
+                </span>
+              </FieldLabel>
+              <input
+                type="date"
+                value={fechaBusqueda}
+                onChange={(e) => setFechaBusqueda(e.target.value)}
+                style={{ ...inputStyle("100%"), marginBottom: 6 }}
+              />
+              <div style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 16 }}>
+                Déjalo vacío para revisar el día de hoy.
+              </div>
+
+              <button
+                onClick={dispararBusqueda}
+                disabled={buscando}
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  padding: "11px",
+                  borderRadius: 6,
+                  border: `1px solid ${C.amberDim}`,
+                  background: "#2E2412",
+                  color: C.amber,
+                  fontSize: 13.5,
+                  fontWeight: 600,
+                  cursor: buscando ? "default" : "pointer",
+                  opacity: buscando ? 0.7 : 1,
+                }}
+              >
+                {buscando ? (
+                  <>
+                    <Loader2 size={15} /> Lanzando búsqueda...
+                  </>
+                ) : (
+                  <>
+                    <Search size={15} /> Buscar ahora
+                  </>
+                )}
+              </button>
+
+              {resultadoBusqueda && (
+                <div
+                  style={{
+                    marginTop: 14,
+                    padding: "10px 12px",
+                    borderRadius: 6,
+                    fontSize: 12.5,
+                    lineHeight: 1.5,
+                    background: resultadoBusqueda.ok ? "#1E2A20" : "#2A1E1E",
+                    border: `1px solid ${resultadoBusqueda.ok ? C.green : C.red}55`,
+                    color: resultadoBusqueda.ok ? C.green : C.red,
+                  }}
+                >
+                  {resultadoBusqueda.mensaje}
+                </div>
+              )}
+            </div>
+
+            <SectionNote>
+              Esto dispara el mismo motor que corre automáticamente, pero para la fecha que elijas. El
+              resultado (si hay licitaciones que calcen) te llega por correo, igual que siempre — este
+              panel solo confirma que la orden se envió, no te muestra los resultados en vivo.
             </SectionNote>
           </div>
         )}
