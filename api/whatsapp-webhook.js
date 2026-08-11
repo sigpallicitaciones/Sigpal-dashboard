@@ -116,6 +116,174 @@ async function dispararMensajePendiente(githubToken, numero) {
   }
 }
 
+// --- Cotizaciones: sesión editable por licitación ---------------------
+
+// Lee el archivo de cotización de una licitación específica desde GitHub.
+async function leerCotizacion(githubToken, codigo) {
+  const ruta = `cotizaciones/${codigo}.json`;
+  const resp = await fetch(
+    `https://api.github.com/repos/${OWNER}/${REPO}/contents/${ruta}`,
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${githubToken}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    }
+  );
+  if (!resp.ok) {
+    throw new Error(`No se pudo leer cotización ${codigo}: ${resp.status}`);
+  }
+  const data = await resp.json();
+  const contenido = Buffer.from(data.content, "base64").toString("utf-8");
+  return { cotizacion: JSON.parse(contenido), sha: data.sha };
+}
+
+// Guarda la cotización actualizada en GitHub.
+async function guardarCotizacion(githubToken, codigo, cotizacion, sha) {
+  const ruta = `cotizaciones/${codigo}.json`;
+  const contenidoBase64 = Buffer.from(
+    JSON.stringify(cotizacion, null, 2),
+    "utf-8"
+  ).toString("base64");
+
+  const resp = await fetch(
+    `https://api.github.com/repos/${OWNER}/${REPO}/contents/${ruta}`,
+    {
+      method: "PUT",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${githubToken}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: `Actualizar cotización ${codigo} (edición vía WhatsApp)`,
+        content: contenidoBase64,
+        sha,
+      }),
+    }
+  );
+  if (!resp.ok) {
+    const detalle = await resp.text();
+    throw new Error(`No se pudo guardar cotización ${codigo}: ${resp.status} ${detalle}`);
+  }
+}
+
+// Le pide a Claude que traduzca un mensaje en lenguaje natural a un cambio
+// estructurado sobre la cotización actual. Devuelve un objeto JS con la
+// acción a aplicar, o null si Claude no pudo interpretar el mensaje como
+// una modificación válida (ej. es solo un saludo).
+async function interpretarInstruccion(anthropicKey, mensajeUsuario, cotizacion) {
+  const systemPrompt = `Eres un asistente que traduce instrucciones en español
+sobre una cotización de Sigpal (empresa de metalmecánica/eléctrica/solar en
+Chile) a un cambio estructurado en JSON. Responde ÚNICAMENTE con un objeto
+JSON válido, sin texto adicional, sin markdown, sin explicaciones.
+
+La cotización actual tiene esta forma:
+${JSON.stringify(cotizacion, null, 2)}
+
+Si el mensaje del usuario pide modificar, agregar o quitar un ítem de
+"materiales" o "mano_obra", responde con uno de estos formatos:
+{"accion": "modificar_item", "seccion": "materiales", "indice": 0, "campo": "cantidad", "valor_nuevo": 6}
+{"accion": "agregar_item", "seccion": "materiales", "item": {"descripcion": "...", "cantidad": 1, "unidad": "Un.", "precio_unitario": 0}}
+{"accion": "eliminar_item", "seccion": "mano_obra", "indice": 2}
+{"accion": "aprobar_cotizacion"}
+{"accion": "sin_cambios", "motivo": "explica brevemente por qué el mensaje no es una instrucción de edición"}
+
+"indice" es 0-based, contando desde el primer ítem de esa sección tal como
+aparece en la cotización actual. Si el mensaje no menciona claramente qué
+ítem modificar, usa "sin_cambios". Si el mensaje dice algo como "aprobada,
+súbela" o "esta es la final, envíala", usa "aprobar_cotizacion".`;
+
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": anthropicKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 500,
+      system: systemPrompt,
+      messages: [{ role: "user", content: mensajeUsuario }],
+    }),
+  });
+
+  if (!resp.ok) {
+    const detalle = await resp.text();
+    console.error(`Error llamando a Claude: ${resp.status} ${detalle}`);
+    return null;
+  }
+
+  const data = await resp.json();
+  const textoRespuesta = data?.content?.[0]?.text || "";
+  try {
+    const limpio = textoRespuesta.replace(/```json|```/g, "").trim();
+    return JSON.parse(limpio);
+  } catch (err) {
+    console.error("No se pudo parsear la respuesta de Claude:", textoRespuesta);
+    return null;
+  }
+}
+
+// Aplica el cambio interpretado por Claude directamente sobre el objeto de
+// cotización en memoria. Devuelve true si se aplicó algo, false si no.
+function aplicarCambio(cotizacion, cambio) {
+  if (!cambio || !cambio.accion) return false;
+
+  if (cambio.accion === "modificar_item") {
+    const lista = cotizacion[cambio.seccion];
+    if (!lista || !lista[cambio.indice]) return false;
+    lista[cambio.indice][cambio.campo] = cambio.valor_nuevo;
+    return true;
+  }
+  if (cambio.accion === "agregar_item") {
+    if (!cotizacion[cambio.seccion]) cotizacion[cambio.seccion] = [];
+    cotizacion[cambio.seccion].push(cambio.item);
+    return true;
+  }
+  if (cambio.accion === "eliminar_item") {
+    const lista = cotizacion[cambio.seccion];
+    if (!lista || !lista[cambio.indice]) return false;
+    lista.splice(cambio.indice, 1);
+    return true;
+  }
+  if (cambio.accion === "aprobar_cotizacion") {
+    cotizacion.estado = "aprobada";
+    return true;
+  }
+  return false; // "sin_cambios" u otra acción no reconocida
+}
+
+// Avisa al motor que regenere el PDF de una cotización (tras un cambio) o
+// que la procese como aprobada (para el envío/registro final).
+async function dispararEventoCotizacion(githubToken, tipoEvento, codigo, numero) {
+  const resp = await fetch(
+    `https://api.github.com/repos/${OWNER}/${REPO}/dispatches`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${githubToken}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        event_type: tipoEvento,
+        client_payload: { codigo, numero },
+      }),
+    }
+  );
+  if (!resp.ok) {
+    const detalle = await resp.text();
+    console.error(`No se pudo disparar ${tipoEvento} para ${codigo}: ${resp.status} ${detalle}`);
+  } else {
+    console.log(`Disparo ${tipoEvento} enviado para ${codigo} (${numero}).`);
+  }
+}
+
 export default async function handler(req, res) {
   // --- Verificación del webhook (Meta llama esto solo al configurarlo) ---
   if (req.method === "GET") {
@@ -170,9 +338,50 @@ export default async function handler(req, res) {
         console.log(`Mensaje entrante de ${numero} (${tipo}): ${texto}`);
 
         const githubToken = process.env.GITHUB_TOKEN;
+        const anthropicKey = process.env.ANTHROPIC_API_KEY;
         if (githubToken) {
           const { estado, sha } = await leerEstado(githubToken);
           const entradaPrevia = estado[numero] || {};
+
+          // --- ¿Hay una cotización en revisión para este número? ---------
+          // Si es así, y el mensaje es texto libre (no un botón de la
+          // plantilla de alerta de licitación), lo tratamos como una
+          // instrucción de edición en vez de como interacción normal.
+          const codigoActivo = entradaPrevia.cotizacion_activa;
+          if (codigoActivo && tipo === "text" && anthropicKey) {
+            try {
+              const { cotizacion, sha: shaCotizacion } = await leerCotizacion(githubToken, codigoActivo);
+              const cambio = await interpretarInstruccion(anthropicKey, texto, cotizacion);
+              const seAplico = aplicarCambio(cotizacion, cambio);
+
+              if (seAplico) {
+                await guardarCotizacion(githubToken, codigoActivo, cotizacion, shaCotizacion);
+                if (cambio.accion === "aprobar_cotizacion") {
+                  await dispararEventoCotizacion(githubToken, "cotizacion_aprobada", codigoActivo, numero);
+                } else {
+                  await dispararEventoCotizacion(githubToken, "regenerar_cotizacion", codigoActivo, numero);
+                }
+              } else {
+                console.log(`Mensaje de ${numero} no se interpretó como cambio válido para ${codigoActivo}.`);
+              }
+            } catch (err) {
+              console.error(`Error procesando edición de cotización ${codigoActivo}:`, err);
+            }
+
+            // Igual guardamos la interacción básica (última_interacción,
+            // etc.) como en el flujo normal, pero sin disparar el chequeo
+            // de mensaje_pendiente — ese flujo es para licitaciones nuevas,
+            // no para ediciones de cotización.
+            const nuevaEntrada = {
+              ...entradaPrevia,
+              "última_interacción": ahoraISO,
+              "último_mensaje": texto,
+              "notificaciones_activas": true,
+            };
+            estado[numero] = nuevaEntrada;
+            await guardarEstado(githubToken, estado, sha);
+            return res.status(200).send("OK");
+          }
 
           // OJO: se arma la entrada nueva explícitamente (sin usar spread
           // de entradaPrevia completa) para no arrastrar campos viejos sin
