@@ -372,6 +372,11 @@ export default function App() {
         sensibilidad: sensitivity,
         regiones: regions,
         horarios: horarios,
+        socios: socios.map((s) => ({
+          nombre: s.nombre,
+          email: s.email,
+          whatsapp: s.whatsapp,
+        })),
         categorias: categories.map((c) => ({
           id: c.id,
           nombre: c.name,
