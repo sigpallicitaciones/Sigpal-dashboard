@@ -174,12 +174,22 @@ export default async function handler(req, res) {
           const { estado, sha } = await leerEstado(githubToken);
           const entradaPrevia = estado[numero] || {};
 
+          // OJO: se arma la entrada nueva explícitamente (sin usar spread
+          // de entradaPrevia completa) para no arrastrar campos viejos sin
+          // tilde ("ultima_interaccion", "ultimo_mensaje") que quedaron de
+          // una versión anterior de este webhook. Así el archivo se va
+          // "limpiando solo" a medida que cada número vuelve a interactuar.
           const nuevaEntrada = {
-            ...entradaPrevia,
             "última_interacción": ahoraISO,
             "último_mensaje": texto,
             "notificaciones_activas": !esRespuestaNo,
           };
+          // Si el motor había dejado un mensaje completo pendiente para
+          // este número, lo conservamos tal cual hasta que el motor lo
+          // envíe y lo limpie él mismo.
+          if (entradaPrevia.mensaje_pendiente !== undefined) {
+            nuevaEntrada.mensaje_pendiente = entradaPrevia.mensaje_pendiente;
+          }
 
           estado[numero] = nuevaEntrada;
           await guardarEstado(githubToken, estado, sha);
