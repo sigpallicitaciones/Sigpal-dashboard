@@ -157,25 +157,55 @@ async function enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero, tex
 
 // Arma el texto de confirmación que se le manda al socio después de
 // aplicar (o intentar aplicar) un cambio sobre la cotización.
-function describirCambio(cambio, cotizacion) {
+// Arma el texto de confirmación que se le manda al socio después de
+// aplicar (o intentar aplicar) un cambio sobre la cotización. "seAplico"
+// viene de aplicarCambio() — es la única fuente de verdad sobre si el
+// cambio realmente se guardó o no, así el mensaje nunca confirma algo
+// que en realidad no pasó (ej. modificar un ítem que no existe).
+function describirCambio(cambio, cotizacion, seAplico) {
   if (!cambio || !cambio.accion) {
     return "No entendí bien esa instrucción. Puedes pedirme cosas como "
       + "\"sube la cantidad del ítem 2 a 6\" o \"agrega 10 metros de cable a $5.000 cada uno\".";
   }
 
   if (cambio.accion === "modificar_item") {
+    if (!seAplico) {
+      const cantidad = (cotizacion[cambio.seccion] || []).length;
+      return `No pude modificar el ítem ${cambio.indice + 1} de ${cambio.seccion} porque no existe `
+        + `(esa sección tiene ${cantidad} ítem${cantidad === 1 ? "" : "s"} ahora mismo). `
+        + `Si quieres agregarlo, dime algo como "agrega [descripción] a ${cambio.seccion}, `
+        + `cantidad X, a $Y cada uno".`;
+    }
     return `✅ Actualicé el campo "${cambio.campo}" del ítem ${cambio.indice + 1} `
       + `de ${cambio.seccion} a: ${cambio.valor_nuevo}.`;
   }
   if (cambio.accion === "agregar_item") {
     const desc = cambio.item?.descripcion || "el nuevo ítem";
-    return `✅ Agregué "${desc}" a ${cambio.seccion}.`;
+    return seAplico
+      ? `✅ Agregué "${desc}" a ${cambio.seccion}.`
+      : `No pude agregar "${desc}" a ${cambio.seccion}.`;
   }
   if (cambio.accion === "eliminar_item") {
+    if (!seAplico) {
+      const cantidad = (cotizacion[cambio.seccion] || []).length;
+      return `No pude eliminar el ítem ${cambio.indice + 1} de ${cambio.seccion} porque no existe `
+        + `(esa sección tiene ${cantidad} ítem${cantidad === 1 ? "" : "s"} ahora mismo).`;
+    }
     return `✅ Eliminé el ítem ${cambio.indice + 1} de ${cambio.seccion}.`;
   }
   if (cambio.accion === "aprobar_cotizacion") {
     return "✅ Cotización marcada como aprobada. Se está procesando el envío/registro.";
+  }
+  if (cambio.accion === "generar_estimacion") {
+    if (!seAplico) {
+      return "No pude generar una estimación con esa información. Prueba dándome más detalle "
+        + "del proyecto, o agrega los ítems uno por uno.";
+    }
+    const nMat = (cambio.materiales || []).length;
+    const nMO = (cambio.mano_obra || []).length;
+    return `✅ Armé una propuesta con ${nMat} ítem(s) de materiales y ${nMO} ítem(s) de mano de obra. `
+      + `⚠️ Son valores ESTIMADOS de referencia según precios típicos del mercado — no son cotizaciones `
+      + `reales de proveedores. Ajústalos si tienes precios concretos. Te reenvío el PDF actualizado.`;
   }
   if (cambio.accion === "ver_cotizacion") {
     return "📄 Te reenvío la cotización actualizada en un momento.";
@@ -209,6 +239,32 @@ async function leerCotizacion(githubToken, codigo) {
   const data = await resp.json();
   const contenido = Buffer.from(data.content, "base64").toString("utf-8");
   return { cotizacion: JSON.parse(contenido), sha: data.sha };
+}
+
+// Lee config.json y devuelve solo la lista de precios base configurada en
+// el dashboard (pestaña "Precios Base"), o [] si no existe/está vacía. No
+// lanza excepción si falla — la estimación puede seguir sin esta referencia.
+async function leerPreciosBase(githubToken) {
+  try {
+    const resp = await fetch(
+      `https://api.github.com/repos/${OWNER}/${REPO}/contents/config.json`,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${githubToken}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      }
+    );
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    const contenido = Buffer.from(data.content, "base64").toString("utf-8");
+    const config = JSON.parse(contenido);
+    return Array.isArray(config.precios_base) ? config.precios_base : [];
+  } catch (err) {
+    console.error("No se pudo leer precios_base de config.json:", err);
+    return [];
+  }
 }
 
 // Guarda la cotización actualizada en GitHub.
@@ -246,7 +302,16 @@ async function guardarCotizacion(githubToken, codigo, cotizacion, sha) {
 // estructurado sobre la cotización actual. Devuelve un objeto JS con la
 // acción a aplicar, o null si Claude no pudo interpretar el mensaje como
 // una modificación válida (ej. es solo un saludo).
-async function interpretarInstruccion(anthropicKey, mensajeUsuario, cotizacion) {
+async function interpretarInstruccion(anthropicKey, mensajeUsuario, cotizacion, preciosBase) {
+  const bloquePreciosBase = (preciosBase && preciosBase.length > 0)
+    ? `\n\nSigpal tiene esta lista de precios base propios (configurada en su dashboard) — 
+son precios reales de la empresa, no estimaciones. SIEMPRE que un ítem que vayas a agregar
+o estimar coincida (o se parezca) a algo de esta lista, usa este precio en vez de inventar
+uno de memoria general:
+${JSON.stringify(preciosBase, null, 2)}
+Solo estima un precio "de mercado" propio cuando el ítem no tenga nada parecido acá arriba.`
+    : "";
+
   const systemPrompt = `Eres un asistente que traduce instrucciones en español
 sobre una cotización de Sigpal (empresa de metalmecánica/eléctrica/solar en
 Chile) a un cambio estructurado en JSON. Responde ÚNICAMENTE con un objeto
@@ -254,19 +319,43 @@ JSON válido, sin texto adicional, sin markdown, sin explicaciones.
 
 La cotización actual tiene esta forma:
 ${JSON.stringify(cotizacion, null, 2)}
+${bloquePreciosBase}
 
 Si el mensaje del usuario pide modificar, agregar o quitar un ítem de
 "materiales" o "mano_obra", responde con uno de estos formatos:
 {"accion": "modificar_item", "seccion": "materiales", "indice": 0, "campo": "cantidad", "valor_nuevo": 6}
 {"accion": "agregar_item", "seccion": "materiales", "item": {"descripcion": "...", "cantidad": 1, "unidad": "Un.", "precio_unitario": 0}}
 {"accion": "eliminar_item", "seccion": "mano_obra", "indice": 2}
+{"accion": "generar_estimacion", "materiales": [{"descripcion": "...", "cantidad": 1, "unidad": "Un.", "precio_unitario": 0}], "mano_obra": [{"descripcion": "...", "cantidad": 1, "unidad": "hora", "precio_unitario": 0}]}
 {"accion": "aprobar_cotizacion"}
 {"accion": "ver_cotizacion"}
 {"accion": "sin_cambios", "motivo": "explica brevemente por qué el mensaje no es una instrucción de edición"}
 
 "indice" es 0-based, contando desde el primer ítem de esa sección tal como
-aparece en la cotización actual. Si el mensaje no menciona claramente qué
-ítem modificar, usa "sin_cambios". Si el mensaje dice algo como "aprobada,
+aparece en la cotización actual. Antes de usar "modificar_item" o
+"eliminar_item", cuenta cuántos ítems tiene esa sección en la cotización
+actual — si el índice que necesitarías no existe todavía (por ejemplo, la
+sección está vacía y te piden poner un valor "en mano de obra" en general),
+usa "agregar_item" en su lugar, creando el ítem con la mejor descripción
+posible a partir del mensaje.
+
+Si el mensaje pide que completes, rellenes, generes o propongas TODA la
+cotización con "valores de mercado", "precios estimados", "precios
+referenciales" o algo similar — es decir, que definas tú una lista completa
+de materiales y mano de obra en base a tu conocimiento general del rubro,
+en vez de editar un ítem puntual — usa "generar_estimacion". Basa la
+lista en el nombre, categoría y motivos de la licitación (ya están arriba,
+en la cotización actual). Para cada ítem: si coincide con algo de la lista
+de precios base de Sigpal (si te la pasé arriba), usa ESE precio real; si
+no coincide con nada de esa lista, estima un precio típico del mercado
+chileno para ese tipo de proyecto (metalmecánica, tableros eléctricos,
+solar FV, servicios industriales, generadores) — arma una lista razonable
+y completa, pero no inventes cifras absurdas ni finjas tener datos de
+mercado en tiempo real para lo que no tengas como referencia.
+
+Si el mensaje no menciona claramente qué ítem modificar y no hay
+suficiente información para agregarlo ni para generar una estimación
+completa, usa "sin_cambios". Si el mensaje dice algo como "aprobada,
 súbela" o "esta es la final, envíala", usa "aprobar_cotizacion". Si el
 mensaje pide ver, recibir, que le reenvíen, o que le manden de nuevo la
 cotización o el PDF actual (sin pedir ningún cambio sobre los datos), usa
@@ -281,7 +370,7 @@ cotización o el PDF actual (sin pedir ningún cambio sobre los datos), usa
     },
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 500,
+      max_tokens: 1500,
       system: systemPrompt,
       messages: [{ role: "user", content: mensajeUsuario }],
     }),
@@ -328,6 +417,14 @@ function aplicarCambio(cotizacion, cambio) {
   }
   if (cambio.accion === "aprobar_cotizacion") {
     cotizacion.estado = "aprobada";
+    return true;
+  }
+  if (cambio.accion === "generar_estimacion") {
+    const materiales = Array.isArray(cambio.materiales) ? cambio.materiales : [];
+    const manoObra = Array.isArray(cambio.mano_obra) ? cambio.mano_obra : [];
+    if (materiales.length === 0 && manoObra.length === 0) return false;
+    cotizacion.materiales = materiales;
+    cotizacion.mano_obra = manoObra;
     return true;
   }
   return false; // "sin_cambios" u otra acción no reconocida
@@ -381,6 +478,25 @@ export default async function handler(req, res) {
       const cambioWebhook = entry?.changes?.[0]?.value;
       const mensajes = cambioWebhook?.messages;
 
+      // Meta también manda actualizaciones de ESTADO de los mensajes que
+      // nosotros mandamos (enviado/entregado/leído/fallido), en un campo
+      // "statuses" separado de "messages". Antes esto se ignoraba en
+      // silencio; ahora se imprime en el log, para poder ver la razón
+      // exacta si un envío falla del lado de Meta (ej. destinatario sin
+      // WhatsApp, número inválido, plantilla rechazada, etc.).
+      const estados = cambioWebhook?.statuses;
+      if (estados && estados.length > 0) {
+        for (const est of estados) {
+          const errores = (est.errors || [])
+            .map((e) => `${e.code}: ${e.title}${e.error_data?.details ? " — " + e.error_data.details : ""}`)
+            .join(" | ");
+          console.log(
+            `Estado de mensaje a ${est.recipient_id}: ${est.status}` +
+            (errores ? ` — ERRORES: ${errores}` : "")
+          );
+        }
+      }
+
       if (mensajes && mensajes.length > 0) {
         const mensaje = mensajes[0];
         const numero = mensaje.from; // número del que escribió, sin '+'
@@ -430,7 +546,8 @@ export default async function handler(req, res) {
           if (codigoActivo && tipo === "text" && anthropicKey) {
             try {
               const { cotizacion, sha: shaCotizacion } = await leerCotizacion(githubToken, codigoActivo);
-              const cambio = await interpretarInstruccion(anthropicKey, texto, cotizacion);
+              const preciosBase = await leerPreciosBase(githubToken);
+              const cambio = await interpretarInstruccion(anthropicKey, texto, cotizacion, preciosBase);
               const seAplico = aplicarCambio(cotizacion, cambio);
 
               if (seAplico) {
@@ -451,7 +568,7 @@ export default async function handler(req, res) {
 
               // Confirmamos por WhatsApp qué se hizo (o por qué no se hizo
               // nada), tanto si aplicó el cambio como si no.
-              const textoConfirmacion = describirCambio(cambio, cotizacion);
+              const textoConfirmacion = describirCambio(cambio, cotizacion, seAplico);
               await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero, textoConfirmacion);
             } catch (err) {
               console.error(`Error procesando edición de cotización ${codigoActivo}:`, err);
