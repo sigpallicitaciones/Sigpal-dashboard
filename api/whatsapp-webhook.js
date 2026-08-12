@@ -18,6 +18,7 @@
 const OWNER = "sigpallicitaciones";
 const REPO = "licitaciones-bot";
 const ESTADO_FILE = "estado_whatsapp.json";
+const WHATSAPP_API_VERSION = "v20.0";
 
 // Quita tildes y pasa a minúsculas, para comparar texto de botones sin
 // depender de mayúsculas/acentos exactos.
@@ -114,6 +115,74 @@ async function dispararMensajePendiente(githubToken, numero) {
   } else {
     console.log(`Disparo enviar_mensaje_pendiente enviado para ${numero}.`);
   }
+}
+
+// --- Envío de mensajes salientes por WhatsApp --------------------------
+
+// Manda un mensaje de texto libre a un número por la API de WhatsApp
+// Cloud. No lanza excepción si falla (solo loguea), para no interrumpir
+// el resto del procesamiento del webhook por un error de notificación.
+async function enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero, texto) {
+  if (!whatsappToken || !whatsappPhoneId) {
+    console.error("Falta WHATSAPP_TOKEN o WHATSAPP_PHONE_ID, no se pudo enviar respuesta.");
+    return;
+  }
+  try {
+    const resp = await fetch(
+      `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${whatsappPhoneId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${whatsappToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to: numero,
+          type: "text",
+          text: { body: texto },
+        }),
+      }
+    );
+    if (!resp.ok) {
+      const detalle = await resp.text();
+      console.error(`Error al enviar respuesta WhatsApp a ${numero}: ${resp.status} ${detalle}`);
+    } else {
+      console.log(`Respuesta enviada a ${numero}: ${texto}`);
+    }
+  } catch (err) {
+    console.error(`Excepción al enviar respuesta WhatsApp a ${numero}:`, err);
+  }
+}
+
+// Arma el texto de confirmación que se le manda al socio después de
+// aplicar (o intentar aplicar) un cambio sobre la cotización.
+function describirCambio(cambio, cotizacion) {
+  if (!cambio || !cambio.accion) {
+    return "No entendí bien esa instrucción. Puedes pedirme cosas como "
+      + "\"sube la cantidad del ítem 2 a 6\" o \"agrega 10 metros de cable a $5.000 cada uno\".";
+  }
+
+  if (cambio.accion === "modificar_item") {
+    return `✅ Actualicé el campo "${cambio.campo}" del ítem ${cambio.indice + 1} `
+      + `de ${cambio.seccion} a: ${cambio.valor_nuevo}.`;
+  }
+  if (cambio.accion === "agregar_item") {
+    const desc = cambio.item?.descripcion || "el nuevo ítem";
+    return `✅ Agregué "${desc}" a ${cambio.seccion}.`;
+  }
+  if (cambio.accion === "eliminar_item") {
+    return `✅ Eliminé el ítem ${cambio.indice + 1} de ${cambio.seccion}.`;
+  }
+  if (cambio.accion === "aprobar_cotizacion") {
+    return "✅ Cotización marcada como aprobada. Se está procesando el envío/registro.";
+  }
+  if (cambio.accion === "sin_cambios") {
+    return cambio.motivo
+      ? `No hice cambios: ${cambio.motivo}`
+      : "No hice ningún cambio con ese mensaje.";
+  }
+  return "Recibí tu mensaje, pero no pude aplicar un cambio con eso.";
 }
 
 // --- Cotizaciones: sesión editable por licitación ---------------------
@@ -302,8 +371,8 @@ export default async function handler(req, res) {
     try {
       const body = req.body;
       const entry = body?.entry?.[0];
-      const cambio = entry?.changes?.[0]?.value;
-      const mensajes = cambio?.messages;
+      const cambioWebhook = entry?.changes?.[0]?.value;
+      const mensajes = cambioWebhook?.messages;
 
       if (mensajes && mensajes.length > 0) {
         const mensaje = mensajes[0];
@@ -339,6 +408,9 @@ export default async function handler(req, res) {
 
         const githubToken = process.env.GITHUB_TOKEN;
         const anthropicKey = process.env.ANTHROPIC_API_KEY;
+        const whatsappToken = process.env.WHATSAPP_TOKEN;
+        const whatsappPhoneId = process.env.WHATSAPP_PHONE_ID;
+
         if (githubToken) {
           const { estado, sha } = await leerEstado(githubToken);
           const entradaPrevia = estado[numero] || {};
@@ -364,8 +436,19 @@ export default async function handler(req, res) {
               } else {
                 console.log(`Mensaje de ${numero} no se interpretó como cambio válido para ${codigoActivo}.`);
               }
+
+              // Confirmamos por WhatsApp qué se hizo (o por qué no se hizo
+              // nada), tanto si aplicó el cambio como si no.
+              const textoConfirmacion = describirCambio(cambio, cotizacion);
+              await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero, textoConfirmacion);
             } catch (err) {
               console.error(`Error procesando edición de cotización ${codigoActivo}:`, err);
+              await enviarMensajeWhatsApp(
+                whatsappToken,
+                whatsappPhoneId,
+                numero,
+                "Hubo un problema procesando tu instrucción. Intenta de nuevo en un momento."
+              );
             }
 
             // Igual guardamos la interacción básica (última_interacción,
