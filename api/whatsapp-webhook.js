@@ -177,6 +177,9 @@ function describirCambio(cambio, cotizacion) {
   if (cambio.accion === "aprobar_cotizacion") {
     return "✅ Cotización marcada como aprobada. Se está procesando el envío/registro.";
   }
+  if (cambio.accion === "ver_cotizacion") {
+    return "📄 Te reenvío la cotización actualizada en un momento.";
+  }
   if (cambio.accion === "sin_cambios") {
     return cambio.motivo
       ? `No hice cambios: ${cambio.motivo}`
@@ -258,12 +261,16 @@ Si el mensaje del usuario pide modificar, agregar o quitar un ítem de
 {"accion": "agregar_item", "seccion": "materiales", "item": {"descripcion": "...", "cantidad": 1, "unidad": "Un.", "precio_unitario": 0}}
 {"accion": "eliminar_item", "seccion": "mano_obra", "indice": 2}
 {"accion": "aprobar_cotizacion"}
+{"accion": "ver_cotizacion"}
 {"accion": "sin_cambios", "motivo": "explica brevemente por qué el mensaje no es una instrucción de edición"}
 
 "indice" es 0-based, contando desde el primer ítem de esa sección tal como
 aparece en la cotización actual. Si el mensaje no menciona claramente qué
 ítem modificar, usa "sin_cambios". Si el mensaje dice algo como "aprobada,
-súbela" o "esta es la final, envíala", usa "aprobar_cotizacion".`;
+súbela" o "esta es la final, envíala", usa "aprobar_cotizacion". Si el
+mensaje pide ver, recibir, que le reenvíen, o que le manden de nuevo la
+cotización o el PDF actual (sin pedir ningún cambio sobre los datos), usa
+"ver_cotizacion".`;
 
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -433,6 +440,11 @@ export default async function handler(req, res) {
                 } else {
                   await dispararEventoCotizacion(githubToken, "regenerar_cotizacion", codigoActivo, numero);
                 }
+              } else if (cambio?.accion === "ver_cotizacion") {
+                // No hay ningún dato que guardar (no se modificó nada),
+                // pero igual le pedimos al motor que regenere el PDF con
+                // los datos actuales y lo reenvíe por WhatsApp y correo.
+                await dispararEventoCotizacion(githubToken, "regenerar_cotizacion", codigoActivo, numero);
               } else {
                 console.log(`Mensaje de ${numero} no se interpretó como cambio válido para ${codigoActivo}.`);
               }
