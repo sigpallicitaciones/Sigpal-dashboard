@@ -339,6 +339,16 @@ function guardarConfig(config) {
   }
 }
 
+function fmtFechaHistorial(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}-${mm}-${yyyy}`;
+}
+
 export default function App() {
   const guardado = cargarConfig();
 
@@ -444,6 +454,34 @@ export default function App() {
   const removeSocio = (index) => {
     setSocios((s) => s.filter((_, i) => i !== index));
   };
+
+  // --- Historial real de cotizaciones (enviadas/ganadas/perdidas) ---------
+  const [historial, setHistorial] = useState([]);
+  const [historialCargando, setHistorialCargando] = useState(true);
+  const [historialError, setHistorialError] = useState(null);
+
+  useEffect(() => {
+    let cancelado = false;
+    fetch("/api/leer-historial")
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelado) return;
+        if (data?.error) {
+          setHistorialError(data.error);
+        } else {
+          setHistorial(data?.historial ?? []);
+        }
+      })
+      .catch((err) => {
+        if (!cancelado) setHistorialError(String(err));
+      })
+      .finally(() => {
+        if (!cancelado) setHistorialCargando(false);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, []);
 
   // --- Búsqueda manual (dispara el bot en GitHub Actions) -----------------
   const [fechaBusqueda, setFechaBusqueda] = useState("");
@@ -1585,46 +1623,71 @@ export default function App() {
                 <FieldLabel>Decisión</FieldLabel>
                 <FieldLabel>Resultado</FieldLabel>
               </div>
-              {SAMPLE_HISTORY.map((h) => (
-                <div
-                  key={h.id}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "90px 1fr 150px 60px 110px 100px",
-                    padding: "12px 14px",
-                    gap: 10,
-                    alignItems: "center",
-                    borderBottom: `1px solid ${C.lineSoft}`,
-                  }}
-                >
-                  <span style={{ fontSize: 12, color: C.textMute, fontFamily: "JetBrains Mono, monospace" }}>
-                    {h.fecha}
-                  </span>
-                  <span style={{ fontSize: 13 }}>{h.nombre}</span>
-                  <span style={{ fontSize: 12, color: C.textMute }}>{h.rubro}</span>
-                  <span
-                    style={{
-                      fontSize: 12.5,
-                      fontFamily: "JetBrains Mono, monospace",
-                      color: h.score >= 70 ? C.green : h.score >= 40 ? C.amber : C.red,
-                    }}
-                  >
-                    {h.score}
-                  </span>
-                  <DecisionBadge value={h.decision} />
-                  <span style={{ fontSize: 12, color: C.textMute }}>
-                    {h.resultado === "ganada" && <span style={{ color: C.green }}>Ganada</span>}
-                    {h.resultado === "pendiente" && "Pendiente"}
-                    {h.resultado === "—" && "—"}
-                  </span>
+              {historialCargando && (
+                <div style={{ padding: "24px 14px", fontSize: 13, color: C.textMute }}>
+                  Cargando historial...
                 </div>
-              ))}
+              )}
+
+              {!historialCargando && historialError && (
+                <div style={{ padding: "24px 14px", fontSize: 13, color: C.red }}>
+                  No se pudo cargar el historial: {historialError}
+                </div>
+              )}
+
+              {!historialCargando && !historialError && historial.length === 0 && (
+                <div style={{ padding: "24px 14px", fontSize: 13, color: C.textMute }}>
+                  Todavía no hay cotizaciones registradas. Aparecerán acá apenas apruebes la primera
+                  cotización por WhatsApp.
+                </div>
+              )}
+
+              {!historialCargando &&
+                !historialError &&
+                historial
+                  .slice()
+                  .sort((a, b) => new Date(b.fecha_envio || 0) - new Date(a.fecha_envio || 0))
+                  .map((h) => (
+                    <div
+                      key={h.codigo}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "90px 1fr 150px 60px 110px 100px",
+                        padding: "12px 14px",
+                        gap: 10,
+                        alignItems: "center",
+                        borderBottom: `1px solid ${C.lineSoft}`,
+                      }}
+                    >
+                      <span style={{ fontSize: 12, color: C.textMute, fontFamily: "JetBrains Mono, monospace" }}>
+                        {fmtFechaHistorial(h.fecha_envio)}
+                      </span>
+                      <span style={{ fontSize: 13 }}>{h.nombre}</span>
+                      <span style={{ fontSize: 12, color: C.textMute }}>{h.rubro}</span>
+                      <span
+                        style={{
+                          fontSize: 12.5,
+                          fontFamily: "JetBrains Mono, monospace",
+                          color: h.score >= 70 ? C.green : h.score >= 40 ? C.amber : C.red,
+                        }}
+                      >
+                        {h.score ?? "—"}
+                      </span>
+                      <DecisionBadge value={h.decision} />
+                      <span style={{ fontSize: 12, color: C.textMute }}>
+                        {h.resultado === "ganada" && <span style={{ color: C.green }}>Ganada</span>}
+                        {h.resultado === "perdida" && <span style={{ color: C.red }}>Perdida</span>}
+                        {h.resultado === "pendiente" && "Pendiente"}
+                        {!h.resultado && "—"}
+                      </span>
+                    </div>
+                  ))}
             </div>
 
             <SectionNote>
-              Estos son datos de ejemplo para mostrar cómo se va a ver el historial. Cuando el bot esté
-              conectado, cada licitación real que analice quedará registrada acá — y esa información es
-              justamente la que alimenta las sugerencias de la pestaña siguiente.
+              Acá queda cada cotización que se aprueba por WhatsApp. Cuando la licitación se adjudica, el
+              bot revisa automáticamente si Sigpal ganó o no, y actualiza el resultado — avisando por
+              correo y WhatsApp si se ganó.
             </SectionNote>
           </div>
         )}
