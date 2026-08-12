@@ -532,9 +532,11 @@ export default async function handler(req, res) {
         const ahoraISO = new Date().toISOString();
 
         // Determina qué pasó: texto libre normal, o respuesta a un botón
-        // de la plantilla (Quick Reply "Sí" / "No").
+        // de la plantilla (Quick Reply "Sí" / "No"), o un botón "Ver" /
+        // "Descartar" del mensaje interactivo de licitación nueva.
         let texto = "(mensaje sin texto, ej. imagen o audio)";
         let esRespuestaNo = false;
+        let botonLicitacion = null; // { accion: "ver"|"descartar", codigo }
 
         if (tipo === "text") {
           texto = mensaje.text?.body || texto;
@@ -548,10 +550,16 @@ export default async function handler(req, res) {
           }
         } else if (tipo === "interactive") {
           // Respuesta a un botón de un mensaje interactivo (no plantilla).
+          const buttonId = mensaje.interactive?.button_reply?.id || "";
           texto = mensaje.interactive?.button_reply?.title || "(respuesta interactiva)";
           const tituloNorm = normalizarTexto(texto);
           if (tituloNorm === "no") {
             esRespuestaNo = true;
+          }
+          if (buttonId.startsWith("ver_")) {
+            botonLicitacion = { accion: "ver", codigo: buttonId.slice(4) };
+          } else if (buttonId.startsWith("descartar_")) {
+            botonLicitacion = { accion: "descartar", codigo: buttonId.slice(10) };
           }
         }
 
@@ -561,6 +569,17 @@ export default async function handler(req, res) {
         const anthropicKey = process.env.ANTHROPIC_API_KEY;
         const whatsappToken = process.env.WHATSAPP_TOKEN;
         const whatsappPhoneId = process.env.WHATSAPP_PHONE_ID;
+
+        // --- Botón "Ver" / "Descartar" de una licitación nueva -----------
+        // Se atiende antes que cualquier otra cosa: no tiene relación con
+        // el flujo de edición de cotizaciones ni con el de reactivación.
+        if (botonLicitacion && githubToken) {
+          const tipoEvento = botonLicitacion.accion === "ver"
+            ? "confirmar_licitacion"
+            : "descartar_licitacion";
+          await dispararEventoCotizacion(githubToken, tipoEvento, botonLicitacion.codigo, numero);
+          return res.status(200).send("OK");
+        }
 
         if (githubToken) {
           const { estado, sha } = await leerEstado(githubToken);
