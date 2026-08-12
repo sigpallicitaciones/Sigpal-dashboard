@@ -585,6 +585,40 @@ export default async function handler(req, res) {
           const { estado, sha } = await leerEstado(githubToken);
           const entradaPrevia = estado[numero] || {};
 
+          // --- ¿Hay una licitación esperando "sí"/"no"? -------------------
+          // Máxima prioridad: si el motor mandó una licitación nueva como
+          // texto libre pidiendo confirmación (en vez de botones — la
+          // cuenta no tiene el permiso de Meta habilitado para mensajes
+          // interactivos), cualquier texto que responda ahora se interpreta
+          // como esa respuesta, antes que cualquier otra cosa.
+          const licitacionEnConfirmacion = entradaPrevia.licitacion_en_confirmacion;
+          if (licitacionEnConfirmacion && tipo === "text") {
+            const textoNorm = normalizarTexto(texto);
+            const esSi = /^s[ií]\b|^ver\b|^cotiza|^dale\b|^ok\b|^vamos\b/.test(textoNorm);
+            const esNo = /^no\b|^descart|^paso\b/.test(textoNorm);
+
+            if (esSi || esNo) {
+              const tipoEvento = esSi ? "confirmar_licitacion" : "descartar_licitacion";
+              await dispararEventoCotizacion(githubToken, tipoEvento, licitacionEnConfirmacion.codigo, numero);
+            } else {
+              await enviarMensajeWhatsApp(
+                whatsappToken, whatsappPhoneId, numero,
+                `No entendí. Responde *sí* para cotizar "${licitacionEnConfirmacion.nombre}" `
+                + `o *no* para descartarla.`
+              );
+            }
+
+            const nuevaEntrada = {
+              ...entradaPrevia,
+              "última_interacción": ahoraISO,
+              "último_mensaje": texto,
+              "notificaciones_activas": true,
+            };
+            estado[numero] = nuevaEntrada;
+            await guardarEstado(githubToken, estado, sha);
+            return res.status(200).send("OK");
+          }
+
           // --- ¿Hay una cotización en revisión para este número? ---------
           // Si es así, y el mensaje es texto libre (no un botón de la
           // plantilla de alerta de licitación), lo tratamos como una
