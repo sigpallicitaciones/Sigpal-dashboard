@@ -542,7 +542,29 @@ export default async function handler(req, res) {
           // Si es así, y el mensaje es texto libre (no un botón de la
           // plantilla de alerta de licitación), lo tratamos como una
           // instrucción de edición en vez de como interacción normal.
+          //
+          // OJO: si además hay un mensaje_pendiente esperando (el detalle
+          // completo de la licitación, que se manda recién cuando el
+          // socio escribe algo por primera vez tras la plantilla), hay que
+          // entregarlo primero — si no, un socio que nunca había escrito
+          // antes quedaría atrapado en modo edición sin haber visto nunca
+          // el detalle de la licitación que originó todo esto.
           const codigoActivo = entradaPrevia.cotizacion_activa;
+          const hayMensajePendiente = !!entradaPrevia.mensaje_pendiente;
+
+          if (codigoActivo && hayMensajePendiente && tipo === "text") {
+            await dispararMensajePendiente(githubToken, numero);
+            const nuevaEntrada = {
+              ...entradaPrevia,
+              "última_interacción": ahoraISO,
+              "último_mensaje": texto,
+              "notificaciones_activas": true,
+            };
+            estado[numero] = nuevaEntrada;
+            await guardarEstado(githubToken, estado, sha);
+            return res.status(200).send("OK");
+          }
+
           if (codigoActivo && tipo === "text" && anthropicKey) {
             try {
               const { cotizacion, sha: shaCotizacion } = await leerCotizacion(githubToken, codigoActivo);
