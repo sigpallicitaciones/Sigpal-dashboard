@@ -162,6 +162,21 @@ async function enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero, tex
 // viene de aplicarCambio() — es la única fuente de verdad sobre si el
 // cambio realmente se guardó o no, así el mensaje nunca confirma algo
 // que en realidad no pasó (ej. modificar un ítem que no existe).
+// Arma un texto con la lista de cotizaciones que el socio tiene abiertas
+// ahora mismo, marcando cuál está activa (la que se edita si escribe algo
+// sin especificar). Se usa tanto para "listar_cotizaciones" como para
+// cuando "cambiar_cotizacion_activa" no encuentra el código pedido.
+function describirListaCotizaciones(cotizacionesAbiertas, codigoActivo) {
+  if (!cotizacionesAbiertas || cotizacionesAbiertas.length === 0) {
+    return "No tienes ninguna cotización abierta ahora mismo.";
+  }
+  const lineas = cotizacionesAbiertas.map((c) => {
+    const marca = c.codigo === codigoActivo ? "👉 " : "• ";
+    return `${marca}${c.nombre} (${c.codigo})`;
+  });
+  return `Tus cotizaciones abiertas:\n${lineas.join("\n")}\n\nPara cambiar de foco, dime algo como "cambia a la del generador" o dame el código.`;
+}
+
 function describirCambio(cambio, cotizacion, seAplico) {
   if (!cambio || !cambio.accion) {
     return "No entendí bien esa instrucción. Puedes pedirme cosas como "
@@ -302,7 +317,7 @@ async function guardarCotizacion(githubToken, codigo, cotizacion, sha) {
 // estructurado sobre la cotización actual. Devuelve un objeto JS con la
 // acción a aplicar, o null si Claude no pudo interpretar el mensaje como
 // una modificación válida (ej. es solo un saludo).
-async function interpretarInstruccion(anthropicKey, mensajeUsuario, cotizacion, preciosBase) {
+async function interpretarInstruccion(anthropicKey, mensajeUsuario, cotizacion, preciosBase, cotizacionesAbiertas) {
   const bloquePreciosBase = (preciosBase && preciosBase.length > 0)
     ? `\n\nSigpal tiene esta lista de precios base propios (configurada en su dashboard) — 
 son precios reales de la empresa, no estimaciones. SIEMPRE que un ítem que vayas a agregar
@@ -312,14 +327,25 @@ ${JSON.stringify(preciosBase, null, 2)}
 Solo estima un precio "de mercado" propio cuando el ítem no tenga nada parecido acá arriba.`
     : "";
 
+  const otrasAbiertas = (cotizacionesAbiertas || []).filter((c) => c.codigo !== cotizacion.codigo);
+  const bloqueOtrasCotizaciones = (otrasAbiertas.length > 0)
+    ? `\n\nAdemás de esta cotización, el usuario tiene otras abiertas al mismo tiempo:
+${JSON.stringify(otrasAbiertas, null, 2)}
+Si el mensaje pide cambiar a otra de estas (ej. "cambia a la del generador", "trabajemos la
+1058086", "muéstrame la de baterías"), usa "cambiar_cotizacion_activa" con el código exacto de
+la que mejor coincida. Si el mensaje pide ver cuáles tiene abiertas en general (ej. "cuáles
+tengo pendientes", "qué cotizaciones tengo abiertas"), usa "listar_cotizaciones".`
+    : "";
+
   const systemPrompt = `Eres un asistente que traduce instrucciones en español
 sobre una cotización de Sigpal (empresa de metalmecánica/eléctrica/solar en
 Chile) a un cambio estructurado en JSON. Responde ÚNICAMENTE con un objeto
 JSON válido, sin texto adicional, sin markdown, sin explicaciones.
 
-La cotización actual tiene esta forma:
+La cotización actual (la que está en foco ahora mismo) tiene esta forma:
 ${JSON.stringify(cotizacion, null, 2)}
 ${bloquePreciosBase}
+${bloqueOtrasCotizaciones}
 
 Si el mensaje del usuario pide modificar, agregar o quitar un ítem de
 "materiales" o "mano_obra", responde con uno de estos formatos:
@@ -329,6 +355,8 @@ Si el mensaje del usuario pide modificar, agregar o quitar un ítem de
 {"accion": "generar_estimacion", "materiales": [{"descripcion": "...", "cantidad": 1, "unidad": "Un.", "precio_unitario": 0}], "mano_obra": [{"descripcion": "...", "cantidad": 1, "unidad": "hora", "precio_unitario": 0}]}
 {"accion": "aprobar_cotizacion"}
 {"accion": "ver_cotizacion"}
+{"accion": "cambiar_cotizacion_activa", "codigo": "..."}
+{"accion": "listar_cotizaciones"}
 {"accion": "sin_cambios", "motivo": "explica brevemente por qué el mensaje no es una instrucción de edición"}
 
 "indice" es 0-based, contando desde el primer ítem de esa sección tal como
@@ -566,31 +594,53 @@ export default async function handler(req, res) {
           }
 
           if (codigoActivo && tipo === "text" && anthropicKey) {
+            let nuevoCodigoActivo = codigoActivo;
+            const cotizacionesAbiertas = entradaPrevia.cotizaciones_abiertas || [];
             try {
               const { cotizacion, sha: shaCotizacion } = await leerCotizacion(githubToken, codigoActivo);
               const preciosBase = await leerPreciosBase(githubToken);
-              const cambio = await interpretarInstruccion(anthropicKey, texto, cotizacion, preciosBase);
-              const seAplico = aplicarCambio(cotizacion, cambio);
+              const cambio = await interpretarInstruccion(
+                anthropicKey, texto, cotizacion, preciosBase, cotizacionesAbiertas
+              );
 
-              if (seAplico) {
-                await guardarCotizacion(githubToken, codigoActivo, cotizacion, shaCotizacion);
-                if (cambio.accion === "aprobar_cotizacion") {
-                  await dispararEventoCotizacion(githubToken, "cotizacion_aprobada", codigoActivo, numero);
+              let textoConfirmacion;
+
+              if (cambio?.accion === "listar_cotizaciones") {
+                textoConfirmacion = describirListaCotizaciones(cotizacionesAbiertas, codigoActivo);
+              } else if (cambio?.accion === "cambiar_cotizacion_activa") {
+                const existe = cotizacionesAbiertas.find((c) => c.codigo === cambio.codigo);
+                if (existe) {
+                  nuevoCodigoActivo = cambio.codigo;
+                  textoConfirmacion = `✅ Cambié el foco a: ${existe.nombre} (${existe.codigo}). `
+                    + `Ahora tus mensajes van a editar esta cotización.`;
                 } else {
-                  await dispararEventoCotizacion(githubToken, "regenerar_cotizacion", codigoActivo, numero);
+                  textoConfirmacion = "No encontré esa cotización entre las que tienes abiertas. "
+                    + describirListaCotizaciones(cotizacionesAbiertas, codigoActivo);
                 }
-              } else if (cambio?.accion === "ver_cotizacion") {
-                // No hay ningún dato que guardar (no se modificó nada),
-                // pero igual le pedimos al motor que regenere el PDF con
-                // los datos actuales y lo reenvíe por WhatsApp y correo.
-                await dispararEventoCotizacion(githubToken, "regenerar_cotizacion", codigoActivo, numero);
               } else {
-                console.log(`Mensaje de ${numero} no se interpretó como cambio válido para ${codigoActivo}.`);
+                const seAplico = aplicarCambio(cotizacion, cambio);
+
+                if (seAplico) {
+                  await guardarCotizacion(githubToken, codigoActivo, cotizacion, shaCotizacion);
+                  if (cambio.accion === "aprobar_cotizacion") {
+                    await dispararEventoCotizacion(githubToken, "cotizacion_aprobada", codigoActivo, numero);
+                  } else {
+                    await dispararEventoCotizacion(githubToken, "regenerar_cotizacion", codigoActivo, numero);
+                  }
+                } else if (cambio?.accion === "ver_cotizacion") {
+                  // No hay ningún dato que guardar (no se modificó nada),
+                  // pero igual le pedimos al motor que regenere el PDF con
+                  // los datos actuales y lo reenvíe por WhatsApp y correo.
+                  await dispararEventoCotizacion(githubToken, "regenerar_cotizacion", codigoActivo, numero);
+                } else {
+                  console.log(`Mensaje de ${numero} no se interpretó como cambio válido para ${codigoActivo}.`);
+                }
+
+                // Confirmamos por WhatsApp qué se hizo (o por qué no se
+                // hizo nada), tanto si aplicó el cambio como si no.
+                textoConfirmacion = describirCambio(cambio, cotizacion, seAplico);
               }
 
-              // Confirmamos por WhatsApp qué se hizo (o por qué no se hizo
-              // nada), tanto si aplicó el cambio como si no.
-              const textoConfirmacion = describirCambio(cambio, cotizacion, seAplico);
               await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero, textoConfirmacion);
             } catch (err) {
               console.error(`Error procesando edición de cotización ${codigoActivo}:`, err);
@@ -605,12 +655,14 @@ export default async function handler(req, res) {
             // Igual guardamos la interacción básica (última_interacción,
             // etc.) como en el flujo normal, pero sin disparar el chequeo
             // de mensaje_pendiente — ese flujo es para licitaciones nuevas,
-            // no para ediciones de cotización.
+            // no para ediciones de cotización. Si el mensaje cambió el
+            // foco a otra cotización abierta, eso también se guarda acá.
             const nuevaEntrada = {
               ...entradaPrevia,
               "última_interacción": ahoraISO,
               "último_mensaje": texto,
               "notificaciones_activas": true,
+              "cotizacion_activa": nuevoCodigoActivo,
             };
             estado[numero] = nuevaEntrada;
             await guardarEstado(githubToken, estado, sha);
