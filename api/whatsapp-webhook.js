@@ -82,7 +82,30 @@ async function guardarEstado(githubToken, estado, sha) {
   );
   if (!resp.ok) {
     const detalle = await resp.text();
-    throw new Error(`No se pudo guardar ${ESTADO_FILE}: ${resp.status} ${detalle}`);
+    const error = new Error(`No se pudo guardar ${ESTADO_FILE}: ${resp.status} ${detalle}`);
+    error.status = resp.status;
+    throw error;
+  }
+}
+
+// Igual que guardarEstado, pero si choca con otro escritor concurrente
+// (409, sha desactualizado — típicamente el motor Python guardando al
+// mismo tiempo desde GitHub Actions) vuelve a leer el estado más
+// reciente, reaplica SOLO los campos indicados en 'actualizarNumero'
+// para ese número, y reintenta una vez más antes de rendirse. Evita que
+// una interacción de WhatsApp se pierda en silencio por una carrera con
+// el motor.
+async function guardarEstadoConReintento(githubToken, estado, sha, numero, actualizarNumero) {
+  try {
+    await guardarEstado(githubToken, estado, sha);
+  } catch (e) {
+    if (e.status !== 409) throw e;
+    console.warn(`Conflicto de sha guardando ${ESTADO_FILE}, reintentando con estado fresco...`);
+    const { estado: estadoFresco, sha: shaFresco } = await leerEstado(githubToken);
+    if (numero && actualizarNumero) {
+      estadoFresco[numero] = { ...(estadoFresco[numero] || {}), ...actualizarNumero };
+    }
+    await guardarEstado(githubToken, estadoFresco, shaFresco);
   }
 }
 
@@ -621,14 +644,27 @@ export default async function handler(req, res) {
               );
             }
 
-            const nuevaEntrada = {
-              ...entradaPrevia,
+            // OJO: NO usamos 'estado'/'entradaPrevia' leídos al principio de
+            // esta función para escribir de vuelta acá. Ese snapshot puede
+            // estar desactualizado para cuando llegamos a este punto: el
+            // motor Python (disparado arriba, corre en GitHub Actions y
+            // puede tardar varios minutos) es el único responsable de
+            // limpiar 'licitacion_en_confirmacion' y avanzar la cola.
+            // Si escribiéramos acá con el snapshot viejo, podríamos pisar
+            // ese cambio (o chocar de sha) y dejar la cola trabada con una
+            // licitación que el socio ya respondió. Por eso releemos el
+            // estado fresco justo antes de escribir, y solo tocamos los
+            // campos que le corresponden a esta interacción (nunca
+            // 'licitacion_en_confirmacion' ni 'cola_licitaciones').
+            const { estado: estadoFresco, sha: shaFresco } = await leerEstado(githubToken);
+            const entradaFresca = estadoFresco[numero] || {};
+            const camposActualizados = {
               "última_interacción": ahoraISO,
               "último_mensaje": texto,
               "notificaciones_activas": true,
             };
-            estado[numero] = nuevaEntrada;
-            await guardarEstado(githubToken, estado, sha);
+            estadoFresco[numero] = { ...entradaFresca, ...camposActualizados };
+            await guardarEstadoConReintento(githubToken, estadoFresco, shaFresco, numero, camposActualizados);
             return res.status(200).send("OK");
           }
 
