@@ -395,6 +395,11 @@ export default function App() {
           monto_max_utm: c.montoMax,
           keywords: c.keywords,
         })),
+        precios_base: prices.map((p) => ({
+          item: p.item,
+          unidad: p.unit,
+          precio: p.price,
+        })),
       },
     }),
   }).catch((err) => {
@@ -487,6 +492,37 @@ export default function App() {
   const [fechaBusqueda, setFechaBusqueda] = useState("");
   const [buscando, setBuscando] = useState(false);
   const [resultadoBusqueda, setResultadoBusqueda] = useState(null); // { ok, mensaje }
+
+  const [buscandoCompraAgil, setBuscandoCompraAgil] = useState(false);
+  const [resultadoBusquedaCompraAgil, setResultadoBusquedaCompraAgil] = useState(null); // { ok, mensaje }
+
+  const dispararBusquedaCompraAgil = async () => {
+    setBuscandoCompraAgil(true);
+    setResultadoBusquedaCompraAgil(null);
+    try {
+      const fechaFormateada = fechaBusqueda
+        ? fechaBusqueda.split("-").reverse().join("") // yyyy-mm-dd -> ddmmaaaa
+        : "";
+      const resp = await fetch("/api/buscar-compra-agil", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fecha: fechaFormateada }),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        setResultadoBusquedaCompraAgil({
+          ok: true,
+          mensaje: `Búsqueda de Compra Ágil lanzada para ${data.fecha === "hoy" ? "hoy" : fechaBusqueda}. Revisa la pestaña "Actions" en GitHub en 1-2 minutos, o tu correo si encuentra algo.`,
+        });
+      } else {
+        setResultadoBusquedaCompraAgil({ ok: false, mensaje: data.error || "Error desconocido." });
+      }
+    } catch (err) {
+      setResultadoBusquedaCompraAgil({ ok: false, mensaje: "No se pudo contactar al servidor: " + String(err) });
+    } finally {
+      setBuscandoCompraAgil(false);
+    }
+  };
 
   const dispararBusqueda = async () => {
     setBuscando(true);
@@ -1576,12 +1612,73 @@ export default function App() {
                   {resultadoBusqueda.mensaje}
                 </div>
               )}
+
+              <div style={{ height: 1, background: C.lineSoft, margin: "18px 0" }} />
+
+              <FieldLabel>
+                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <Search size={11} /> Compra Ágil
+                </span>
+              </FieldLabel>
+              <div style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 10 }}>
+                Busca por separado en el mecanismo de Compra Ágil (usa la misma fecha de arriba).
+              </div>
+
+              <button
+                onClick={dispararBusquedaCompraAgil}
+                disabled={buscandoCompraAgil}
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  padding: "11px",
+                  borderRadius: 6,
+                  border: `1px solid ${C.amberDim}`,
+                  background: "#2E2412",
+                  color: C.amber,
+                  fontSize: 13.5,
+                  fontWeight: 600,
+                  cursor: buscandoCompraAgil ? "default" : "pointer",
+                  opacity: buscandoCompraAgil ? 0.7 : 1,
+                }}
+              >
+                {buscandoCompraAgil ? (
+                  <>
+                    <Loader2 size={15} /> Lanzando búsqueda...
+                  </>
+                ) : (
+                  <>
+                    <Search size={15} /> Buscar en Compra Ágil
+                  </>
+                )}
+              </button>
+
+              {resultadoBusquedaCompraAgil && (
+                <div
+                  style={{
+                    marginTop: 14,
+                    padding: "10px 12px",
+                    borderRadius: 6,
+                    fontSize: 12.5,
+                    lineHeight: 1.5,
+                    background: resultadoBusquedaCompraAgil.ok ? "#1E2A20" : "#2A1E1E",
+                    border: `1px solid ${resultadoBusquedaCompraAgil.ok ? C.green : C.red}55`,
+                    color: resultadoBusquedaCompraAgil.ok ? C.green : C.red,
+                  }}
+                >
+                  {resultadoBusquedaCompraAgil.mensaje}
+                </div>
+              )}
             </div>
 
             <SectionNote>
               Esto dispara el mismo motor que corre automáticamente, pero para la fecha que elijas. El
               resultado (si hay licitaciones que calcen) te llega por correo, igual que siempre — este
-              panel solo confirma que la orden se envió, no te muestra los resultados en vivo.
+              panel solo confirma que la orden se envió, no te muestra los resultados en vivo. Las
+              corridas automáticas ya revisan ambos mecanismos (Licitaciones y Compra Ágil) juntas; estos
+              botones son solo para forzar una revisión puntual de uno u otro por separado.
             </SectionNote>
           </div>
         )}
