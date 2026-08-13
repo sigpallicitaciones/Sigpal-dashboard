@@ -177,10 +177,21 @@ function describirListaCotizaciones(cotizacionesAbiertas, codigoActivo) {
   return `Tus cotizaciones abiertas:\n${lineas.join("\n")}\n\nPara cambiar de foco, dime algo como "cambia a la del generador" o dame el código.`;
 }
 
-function describirCambio(cambio, cotizacion, seAplico) {
+function describirCambio(cambio, cotizacion, seAplico, cotizacionesAbiertas) {
+  // Si hay más de una cotización abierta al mismo tiempo, cada respuesta
+  // deja explícito a cuál se refiere — así un desajuste (ej. pedir "la
+  // cotización" y que responda sobre una distinta a la que tenías en
+  // mente) se nota altiro en el chat, sin tener que abrir el PDF.
+  const otras = (cotizacionesAbiertas || []).filter((c) => c.codigo !== cotizacion.codigo);
+  const sufijoContexto = otras.length > 0
+    ? `\n\n(Sobre: ${cotizacion.nombre} — ${cotizacion.codigo}. Tienes ${otras.length} cotización(es) `
+      + `más abierta(s); escribe "cuáles tengo abiertas" para verlas o "cambia a..." para editar otra.)`
+    : "";
+
   if (!cambio || !cambio.accion) {
     return "No entendí bien esa instrucción. Puedes pedirme cosas como "
-      + "\"sube la cantidad del ítem 2 a 6\" o \"agrega 10 metros de cable a $5.000 cada uno\".";
+      + "\"sube la cantidad del ítem 2 a 6\" o \"agrega 10 metros de cable a $5.000 cada uno\"."
+      + sufijoContexto;
   }
 
   if (cambio.accion === "modificar_item") {
@@ -189,48 +200,50 @@ function describirCambio(cambio, cotizacion, seAplico) {
       return `No pude modificar el ítem ${cambio.indice + 1} de ${cambio.seccion} porque no existe `
         + `(esa sección tiene ${cantidad} ítem${cantidad === 1 ? "" : "s"} ahora mismo). `
         + `Si quieres agregarlo, dime algo como "agrega [descripción] a ${cambio.seccion}, `
-        + `cantidad X, a $Y cada uno".`;
+        + `cantidad X, a $Y cada uno".` + sufijoContexto;
     }
     return `✅ Actualicé el campo "${cambio.campo}" del ítem ${cambio.indice + 1} `
-      + `de ${cambio.seccion} a: ${cambio.valor_nuevo}.`;
+      + `de ${cambio.seccion} a: ${cambio.valor_nuevo}.` + sufijoContexto;
   }
   if (cambio.accion === "agregar_item") {
     const desc = cambio.item?.descripcion || "el nuevo ítem";
-    return seAplico
+    return (seAplico
       ? `✅ Agregué "${desc}" a ${cambio.seccion}.`
-      : `No pude agregar "${desc}" a ${cambio.seccion}.`;
+      : `No pude agregar "${desc}" a ${cambio.seccion}.`) + sufijoContexto;
   }
   if (cambio.accion === "eliminar_item") {
     if (!seAplico) {
       const cantidad = (cotizacion[cambio.seccion] || []).length;
       return `No pude eliminar el ítem ${cambio.indice + 1} de ${cambio.seccion} porque no existe `
-        + `(esa sección tiene ${cantidad} ítem${cantidad === 1 ? "" : "s"} ahora mismo).`;
+        + `(esa sección tiene ${cantidad} ítem${cantidad === 1 ? "" : "s"} ahora mismo).` + sufijoContexto;
     }
-    return `✅ Eliminé el ítem ${cambio.indice + 1} de ${cambio.seccion}.`;
+    return `✅ Eliminé el ítem ${cambio.indice + 1} de ${cambio.seccion}.` + sufijoContexto;
   }
   if (cambio.accion === "aprobar_cotizacion") {
-    return "✅ Cotización marcada como aprobada. Se está procesando el envío/registro.";
+    return `✅ Cotización marcada como aprobada. Se está procesando el envío/registro.` + sufijoContexto;
   }
   if (cambio.accion === "generar_estimacion") {
     if (!seAplico) {
       return "No pude generar una estimación con esa información. Prueba dándome más detalle "
-        + "del proyecto, o agrega los ítems uno por uno.";
+        + "del proyecto, o agrega los ítems uno por uno." + sufijoContexto;
     }
     const nMat = (cambio.materiales || []).length;
     const nMO = (cambio.mano_obra || []).length;
     return `✅ Armé una propuesta con ${nMat} ítem(s) de materiales y ${nMO} ítem(s) de mano de obra. `
       + `⚠️ Son valores ESTIMADOS de referencia según precios típicos del mercado — no son cotizaciones `
-      + `reales de proveedores. Ajústalos si tienes precios concretos. Te reenvío el PDF actualizado.`;
+      + `reales de proveedores. Ajústalos si tienes precios concretos. Te reenvío el PDF actualizado.`
+      + sufijoContexto;
   }
   if (cambio.accion === "ver_cotizacion") {
-    return "📄 Te reenvío la cotización actualizada en un momento.";
+    return `📄 Te reenvío la cotización de "${cotizacion.nombre}" (${cotizacion.codigo}) en un momento.`
+      + sufijoContexto;
   }
   if (cambio.accion === "sin_cambios") {
-    return cambio.motivo
+    return (cambio.motivo
       ? `No hice cambios: ${cambio.motivo}`
-      : "No hice ningún cambio con ese mensaje.";
+      : "No hice ningún cambio con ese mensaje.") + sufijoContexto;
   }
-  return "Recibí tu mensaje, pero no pude aplicar un cambio con eso.";
+  return "Recibí tu mensaje, pero no pude aplicar un cambio con eso." + sufijoContexto;
 }
 
 // --- Cotizaciones: sesión editable por licitación ---------------------
@@ -691,7 +704,7 @@ export default async function handler(req, res) {
 
                 // Confirmamos por WhatsApp qué se hizo (o por qué no se
                 // hizo nada), tanto si aplicó el cambio como si no.
-                textoConfirmacion = describirCambio(cambio, cotizacion, seAplico);
+                textoConfirmacion = describirCambio(cambio, cotizacion, seAplico, cotizacionesAbiertas);
               }
 
               await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero, textoConfirmacion);
