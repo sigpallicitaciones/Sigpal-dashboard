@@ -628,10 +628,21 @@ export default async function handler(req, res) {
           // interactivos), cualquier texto que responda ahora se interpreta
           // como esa respuesta, antes que cualquier otra cosa.
           const licitacionEnConfirmacion = entradaPrevia.licitacion_en_confirmacion;
-          if (licitacionEnConfirmacion && tipo === "text") {
-            const textoNorm = normalizarTexto(texto);
-            const esSi = /^s[ií]\b|^ver\b|^cotiza|^dale\b|^ok\b|^vamos\b/.test(textoNorm);
-            const esNo = /^no\b|^descart|^paso\b/.test(textoNorm);
+          if (licitacionEnConfirmacion && (tipo === "text" || tipo === "button")) {
+            let esSi, esNo;
+            if (tipo === "button") {
+              // Ya se determinó esRespuestaNo arriba a partir de
+              // mensaje.button (payload/texto del botón tocado en la
+              // plantilla). Si no fue "No", en este flujo de
+              // confirmación cualquier botón que no sea "No" se toma
+              // como "Sí" — la plantilla solo tiene esos dos botones.
+              esNo = esRespuestaNo;
+              esSi = !esRespuestaNo;
+            } else {
+              const textoNorm = normalizarTexto(texto);
+              esSi = /^s[ií]\b|^ver\b|^cotiza|^dale\b|^ok\b|^vamos\b/.test(textoNorm);
+              esNo = /^no\b|^descart|^paso\b/.test(textoNorm);
+            }
 
             if (esSi || esNo) {
               const tipoEvento = esSi ? "confirmar_licitacion" : "descartar_licitacion";
