@@ -195,41 +195,6 @@ const SAMPLE_HISTORY = [
   },
 ];
 
-const SAMPLE_SUGGESTIONS = [
-  {
-    id: 1,
-    tipo: "ajuste",
-    titulo: "La palabra clave \"mantenimiento industrial\" trae mucho ruido",
-    detalle:
-      "De 14 licitaciones detectadas por esta palabra en el último mes, descartaste 11 manualmente. Considera reemplazarla por términos más específicos como \"mantenimiento eléctrico industrial\" o \"mantenimiento de tableros\".",
-    accion: "Revisar en Rubros → Servicios Industriales",
-  },
-  {
-    id: 2,
-    tipo: "oportunidad",
-    titulo: "Podrías estar perdiendo licitaciones en Coquimbo",
-    detalle:
-      "Se detectaron 6 licitaciones de tableros eléctricos en Coquimbo en los últimos 30 días, fuera de tu zona actual. Si tienes forma de cubrir esa logística, ampliar la región podría abrir oportunidades.",
-    accion: "Revisar en Montos y Zonas",
-  },
-  {
-    id: 3,
-    tipo: "precio",
-    titulo: "Tu precio de HH técnico eléctrico está bajo el promedio de mercado detectado",
-    detalle:
-      "En licitaciones adjudicadas similares a las tuyas, el valor promedio ofertado fue de $21.500 por HH técnico eléctrico, versus los $18.000 que tienes configurados.",
-    accion: "Revisar en Precios Base",
-  },
-  {
-    id: 4,
-    tipo: "ajuste",
-    titulo: "El filtro está en modo estricto y puede estar dejando pasar oportunidades chicas",
-    detalle:
-      "Con sensibilidad alta, licitaciones bajo 20 UTM casi nunca alcanzan el puntaje mínimo, aunque calcen en rubro. Si te interesan también proyectos pequeños, prueba bajar la sensibilidad unos puntos.",
-    accion: "Revisar en Horarios → Sensibilidad",
-  },
-];
-
 // ---------------------------------------------------------------------------
 // Small building blocks
 // ---------------------------------------------------------------------------
@@ -488,7 +453,56 @@ export default function App() {
     };
   }, []);
 
-  // --- Búsqueda manual (dispara el bot en GitHub Actions) -----------------
+  // --- Sugerencias reales (generadas por análisis del historial) ----------
+  const [sugerencias, setSugerencias] = useState([]);
+  const [sugerenciasCargando, setSugerenciasCargando] = useState(true);
+  const [sugerenciasError, setSugerenciasError] = useState(null);
+  const [sugerenciasMeta, setSugerenciasMeta] = useState(null); // { generadas_en, datos_insuficientes, mensaje }
+  const [generandoSugerencias, setGenerandoSugerencias] = useState(false);
+  const [sugerenciasDescartadas, setSugerenciasDescartadas] = useState([]); // ids descartadas localmente (👎)
+
+  const cargarSugerencias = () => {
+    setSugerenciasCargando(true);
+    setSugerenciasError(null);
+    fetch("/api/leer-sugerencias")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.error) {
+          setSugerenciasError(data.error);
+        } else {
+          setSugerencias(data?.sugerencias ?? []);
+          setSugerenciasMeta(data ?? null);
+        }
+      })
+      .catch((err) => setSugerenciasError(String(err)))
+      .finally(() => setSugerenciasCargando(false));
+  };
+
+  useEffect(() => {
+    cargarSugerencias();
+  }, []);
+
+  const generarSugerencias = async () => {
+    setGenerandoSugerencias(true);
+    setSugerenciasError(null);
+    try {
+      const resp = await fetch("/api/generar-sugerencias", { method: "POST" });
+      const data = await resp.json();
+      if (!resp.ok) {
+        setSugerenciasError(data.error || "No se pudieron generar las sugerencias.");
+      } else {
+        setSugerencias(data?.sugerencias ?? []);
+        setSugerenciasMeta(data ?? null);
+        setSugerenciasDescartadas([]);
+      }
+    } catch (err) {
+      setSugerenciasError(String(err));
+    } finally {
+      setGenerandoSugerencias(false);
+    }
+  };
+
+
   const [fechaBusqueda, setFechaBusqueda] = useState("");
   const [buscando, setBuscando] = useState(false);
   const [resultadoBusqueda, setResultadoBusqueda] = useState(null); // { ok, mensaje }
@@ -870,7 +884,7 @@ export default function App() {
               >
                 {t.label}
               </span>
-              {t.id === "sugerencias" && (
+              {t.id === "sugerencias" && sugerencias.length > 0 && (
                 <span
                   style={{
                     marginLeft: "auto",
@@ -883,7 +897,7 @@ export default function App() {
                     fontFamily: "JetBrains Mono, monospace",
                   }}
                 >
-                  {SAMPLE_SUGGESTIONS.length}
+                  {sugerencias.length}
                 </span>
               )}
             </button>
@@ -1792,78 +1806,186 @@ export default function App() {
         {/* ------------------------------------------------- SUGERENCIAS TAB */}
         {tab === "sugerencias" && (
           <div>
-            <div style={{ marginBottom: 18 }}>
-              <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 22, fontWeight: 600 }}>
-                Sugerencias para mejorar el criterio
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 12,
+                marginBottom: 18,
+              }}
+            >
+              <div>
+                <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 22, fontWeight: 600 }}>
+                  Sugerencias para mejorar el criterio
+                </div>
+                <div style={{ fontSize: 13, color: C.textMute, marginTop: 3 }}>
+                  {sugerenciasMeta?.generadas_en
+                    ? `Última actualización: ${new Date(sugerenciasMeta.generadas_en).toLocaleString("es-CL")}`
+                    : "Ideas generadas a partir de tu historial real, para ajustar rubros, precios o zonas."}
+                </div>
               </div>
-              <div style={{ fontSize: 13, color: C.textMute, marginTop: 3 }}>
-                Ideas generadas a partir de tu historial real, para ajustar rubros, precios o zonas.
-              </div>
+              <button
+                onClick={generarSugerencias}
+                disabled={generandoSugerencias}
+                style={{
+                  fontFamily: "JetBrains Mono, monospace",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: generandoSugerencias ? C.textFaint : C.cyan,
+                  background: C.panel,
+                  border: `1px solid ${C.lineSoft}`,
+                  borderRadius: 6,
+                  padding: "8px 14px",
+                  cursor: generandoSugerencias ? "default" : "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {generandoSugerencias ? "Analizando..." : "Generar sugerencias"}
+              </button>
             </div>
 
+            {sugerenciasError && (
+              <div
+                style={{
+                  background: "rgba(220,80,80,0.08)",
+                  border: `1px solid ${C.red || "#c44"}`,
+                  borderRadius: 6,
+                  padding: 14,
+                  fontSize: 13,
+                  color: C.text,
+                  marginBottom: 14,
+                }}
+              >
+                No se pudo generar/leer sugerencias: {sugerenciasError}
+              </div>
+            )}
+
+            {sugerenciasCargando && !sugerenciasError && (
+              <div style={{ fontSize: 13, color: C.textMute }}>Cargando sugerencias…</div>
+            )}
+
+            {!sugerenciasCargando && !sugerenciasError && sugerenciasMeta?.nunca_generadas && (
+              <div
+                style={{
+                  background: C.panel,
+                  border: `1px solid ${C.lineSoft}`,
+                  borderRadius: 6,
+                  padding: 20,
+                  fontSize: 13,
+                  color: C.textMute,
+                  lineHeight: 1.6,
+                }}
+              >
+                Todavía no se generó ninguna sugerencia. Tocá "Generar sugerencias" para que el bot
+                analice tu historial real de cotizaciones (ganadas, perdidas, pendientes) y te proponga
+                ajustes concretos.
+              </div>
+            )}
+
+            {!sugerenciasCargando && !sugerenciasError && sugerenciasMeta?.datos_insuficientes && (
+              <div
+                style={{
+                  background: C.panel,
+                  border: `1px solid ${C.lineSoft}`,
+                  borderRadius: 6,
+                  padding: 20,
+                  fontSize: 13,
+                  color: C.textMute,
+                  lineHeight: 1.6,
+                }}
+              >
+                {sugerenciasMeta.mensaje ||
+                  "Todavía hay muy pocos datos con resultado conocido para generar sugerencias confiables."}
+              </div>
+            )}
+
+            {!sugerenciasCargando &&
+              !sugerenciasError &&
+              !sugerenciasMeta?.nunca_generadas &&
+              !sugerenciasMeta?.datos_insuficientes &&
+              sugerencias.length === 0 && (
+                <div style={{ fontSize: 13, color: C.textMute }}>
+                  El último análisis no encontró ninguna sugerencia para proponer por ahora.
+                </div>
+              )}
+
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {SAMPLE_SUGGESTIONS.map((s) => (
-                <div
-                  key={s.id}
-                  style={{
-                    background: C.panel,
-                    border: `1px solid ${C.lineSoft}`,
-                    borderLeft: `3px solid ${C.cyan}`,
-                    borderRadius: 6,
-                    padding: 16,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                    <div
-                      style={{
-                        width: 26,
-                        height: 26,
-                        borderRadius: 6,
-                        background: C.panelAlt,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        flexShrink: 0,
-                        marginTop: 1,
-                      }}
-                    >
-                      {s.tipo === "ajuste" && <SlidersHorizontal size={13} color={C.cyan} />}
-                      {s.tipo === "oportunidad" && <TrendingUp size={13} color={C.green} />}
-                      {s.tipo === "precio" && <DollarSign size={13} color={C.amber} />}
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 5 }}>{s.titulo}</div>
-                      <div style={{ fontSize: 12.5, color: C.textMute, lineHeight: 1.55, marginBottom: 10 }}>
-                        {s.detalle}
+              {sugerencias
+                .filter((s) => !sugerenciasDescartadas.includes(s.id))
+                .map((s) => (
+                  <div
+                    key={s.id}
+                    style={{
+                      background: C.panel,
+                      border: `1px solid ${C.lineSoft}`,
+                      borderLeft: `3px solid ${C.cyan}`,
+                      borderRadius: 6,
+                      padding: 16,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                      <div
+                        style={{
+                          width: 26,
+                          height: 26,
+                          borderRadius: 6,
+                          background: C.panelAlt,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                          marginTop: 1,
+                        }}
+                      >
+                        {s.tipo === "ajuste" && <SlidersHorizontal size={13} color={C.cyan} />}
+                        {s.tipo === "oportunidad" && <TrendingUp size={13} color={C.green} />}
+                        {s.tipo === "precio" && <DollarSign size={13} color={C.amber} />}
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                        <span
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 4,
-                            fontSize: 11.5,
-                            color: C.cyan,
-                            fontFamily: "JetBrains Mono, monospace",
-                          }}
-                        >
-                          {s.accion} <ArrowRight size={11} />
-                        </span>
-                        <span style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
-                          <ThumbsUp size={13} color={C.textFaint} style={{ cursor: "pointer" }} />
-                          <ThumbsDown size={13} color={C.textFaint} style={{ cursor: "pointer" }} />
-                        </span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 5 }}>{s.titulo}</div>
+                        <div style={{ fontSize: 12.5, color: C.textMute, lineHeight: 1.55, marginBottom: 10 }}>
+                          {s.detalle}
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                          <span
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4,
+                              fontSize: 11.5,
+                              color: C.cyan,
+                              fontFamily: "JetBrains Mono, monospace",
+                            }}
+                          >
+                            {s.accion} <ArrowRight size={11} />
+                          </span>
+                          <span style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+                            <ThumbsUp
+                              size={13}
+                              color={C.textFaint}
+                              style={{ cursor: "pointer" }}
+                              onClick={() => setSugerenciasDescartadas((d) => [...d, s.id])}
+                            />
+                            <ThumbsDown
+                              size={13}
+                              color={C.textFaint}
+                              style={{ cursor: "pointer" }}
+                              onClick={() => setSugerenciasDescartadas((d) => [...d, s.id])}
+                            />
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
             </div>
 
             <SectionNote>
-              Estas sugerencias también son de ejemplo. La idea es que, con datos reales, el bot compare
-              tus decisiones (qué aprobaste, qué descartaste, qué ganaste) contra el criterio configurado
-              y te proponga ajustes concretos — tú decides si aplicarlos con 👍/👎, nunca se cambian solos.
+              El bot compara tus decisiones reales (qué aprobaste, y de eso qué ganaste o perdiste) contra
+              el criterio configurado y te propone ajustes concretos — tú decidís si aplicarlos en la
+              sección correspondiente, nunca se cambian solos. 👍/👎 solo ocultan la tarjeta en esta
+              sesión, no modifican ninguna configuración.
             </SectionNote>
           </div>
         )}
