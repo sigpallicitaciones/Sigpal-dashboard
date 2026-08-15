@@ -186,7 +186,7 @@ const TABS_GENERAL = [
 
 const TABS = [
   { id: "rubros", label: "Rubros", icon: SlidersHorizontal },
-  { id: "zonas", label: "Montos y Zonas", icon: MapPin },
+  { id: "zonas", label: "Zonas", icon: MapPin },
   { id: "precios", label: "Precios Base", icon: DollarSign },
   { id: "horarios", label: "Horarios", icon: Clock },
   { id: "notificaciones", label: "Notificaciones", icon: Bell },
@@ -710,6 +710,7 @@ export default function App() {
   );
   const [newHorario, setNewHorario] = useState("");
   const [savedFlash, setSavedFlash] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
 
   // Guarda automáticamente cada vez que cambia cualquier parte de la configuración
   useEffect(() => {
@@ -1472,44 +1473,117 @@ export default function App() {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div
-              title="Cotizaciones en curso"
-              style={{
-                position: "relative",
-                width: 38,
-                height: 38,
-                borderRadius: 8,
-                background: C.panelAlt,
-                border: `1px solid ${C.lineSoft}`,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexShrink: 0,
-              }}
-            >
-              <Bell size={16} color={C.textMute} />
-              {cotizacionesAbiertas.length > 0 && (
-                <span
+            <div style={{ position: "relative" }}>
+              <button
+                title="Cotizaciones en curso"
+                onClick={() => setNotifOpen((v) => !v)}
+                style={{
+                  position: "relative",
+                  width: 38,
+                  height: 38,
+                  borderRadius: 8,
+                  background: notifOpen ? C.amberSoft : C.panelAlt,
+                  border: `1px solid ${notifOpen ? C.amberDim : C.lineSoft}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                  cursor: "pointer",
+                }}
+              >
+                <Bell size={16} color={notifOpen ? C.amber : C.textMute} />
+                {cotizacionesAbiertas.length > 0 && (
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: -4,
+                      right: -4,
+                      background: C.red,
+                      color: "#FFFFFF",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      borderRadius: 999,
+                      minWidth: 16,
+                      height: 16,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: "0 3px",
+                      fontFamily: "JetBrains Mono, monospace",
+                    }}
+                  >
+                    {cotizacionesAbiertas.length}
+                  </span>
+                )}
+              </button>
+
+              {notifOpen && (
+                <div
                   style={{
                     position: "absolute",
-                    top: -4,
-                    right: -4,
-                    background: C.red,
-                    color: "#FFFFFF",
-                    fontSize: 10,
-                    fontWeight: 700,
-                    borderRadius: 999,
-                    minWidth: 16,
-                    height: 16,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: "0 3px",
-                    fontFamily: "JetBrains Mono, monospace",
+                    top: 44,
+                    right: 0,
+                    width: 300,
+                    background: C.panel,
+                    border: `1px solid ${C.lineSoft}`,
+                    borderRadius: 8,
+                    boxShadow: "0 8px 24px rgba(20,30,60,0.12)",
+                    zIndex: 20,
+                    overflow: "hidden",
                   }}
                 >
-                  {cotizacionesAbiertas.length}
-                </span>
+                  <div
+                    style={{
+                      padding: "10px 14px",
+                      borderBottom: `1px solid ${C.lineSoft}`,
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                    }}
+                  >
+                    Cotizaciones en curso
+                  </div>
+                  {cotizacionesAbiertas.length === 0 ? (
+                    <div style={{ padding: "16px 14px", fontSize: 12.5, color: C.textMute }}>
+                      No hay ninguna pendiente ahora mismo.
+                    </div>
+                  ) : (
+                    <div style={{ maxHeight: 260, overflowY: "auto" }}>
+                      {cotizacionesAbiertas.map((c, i) => (
+                        <div
+                          key={c.codigo}
+                          style={{
+                            padding: "10px 14px",
+                            borderTop: i === 0 ? "none" : `1px solid ${C.lineSoft}`,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 3,
+                          }}
+                        >
+                          <span style={{ fontSize: 10.5, color: C.amber, fontFamily: "JetBrains Mono, monospace" }}>
+                            {c.codigo}
+                          </span>
+                          <span style={{ fontSize: 12, color: C.text }}>{c.nombre}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div
+                    onClick={() => {
+                      setTab("historial");
+                      setNotifOpen(false);
+                    }}
+                    style={{
+                      padding: "9px 14px",
+                      borderTop: `1px solid ${C.lineSoft}`,
+                      fontSize: 11.5,
+                      color: C.cyan,
+                      cursor: "pointer",
+                      textAlign: "center",
+                    }}
+                  >
+                    Ver historial completo →
+                  </div>
+                </div>
               )}
             </div>
             <button
@@ -1757,6 +1831,9 @@ export default function App() {
               Recomendación: parte con las regiones donde Sigpal ya tiene logística instalada (traslado
               de materiales, técnicos disponibles). Agregar regiones lejanas sin cobertura solo generará
               notificaciones de licitaciones que después descartarás igual.
+              <br />
+              <br />
+              ¿Buscas los montos mínimo/máximo? Se configuran por rubro, dentro de la pestaña "Rubros".
             </SectionNote>
           </div>
         )}
