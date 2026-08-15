@@ -1756,6 +1756,20 @@ export default function App() {
                         {c.codigo}
                       </span>
                       <span style={{ fontSize: 12.5, color: C.text, flex: 1 }}>{c.nombre}</span>
+                      <a
+                        href={`/api/ver-pdf?codigo=${encodeURIComponent(c.codigo)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          fontSize: 10.5,
+                          fontFamily: "JetBrains Mono, monospace",
+                          color: C.cyan,
+                          textDecoration: "none",
+                          flexShrink: 0,
+                        }}
+                      >
+                        Ver PDF
+                      </a>
                       {c.socios?.some((s) => s.es_activa) && (
                         <span
                           style={{
@@ -1791,7 +1805,7 @@ export default function App() {
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "90px 1fr 150px 60px 110px 100px",
+                  gridTemplateColumns: "90px 1fr 150px 60px 110px 100px 70px",
                   padding: "10px 14px",
                   background: C.panelAlt,
                   borderBottom: `1px solid ${C.lineSoft}`,
@@ -1804,6 +1818,7 @@ export default function App() {
                 <FieldLabel>Score</FieldLabel>
                 <FieldLabel>Decisión</FieldLabel>
                 <FieldLabel>Resultado</FieldLabel>
+                <FieldLabel>PDF</FieldLabel>
               </div>
               {historialCargando && (
                 <div style={{ padding: "24px 14px", fontSize: 13, color: C.textMute }}>
@@ -1834,7 +1849,7 @@ export default function App() {
                       key={h.codigo}
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "90px 1fr 150px 60px 110px 100px",
+                        gridTemplateColumns: "90px 1fr 150px 60px 110px 100px 70px",
                         padding: "12px 14px",
                         gap: 10,
                         alignItems: "center",
@@ -1862,6 +1877,23 @@ export default function App() {
                         {h.resultado === "pendiente" && "Pendiente"}
                         {!h.resultado && "—"}
                       </span>
+                      {h.codigo ? (
+                        <a
+                          href={`/api/ver-pdf?codigo=${encodeURIComponent(h.codigo)}&aprobada=1`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            fontSize: 11,
+                            fontFamily: "JetBrains Mono, monospace",
+                            color: C.cyan,
+                            textDecoration: "none",
+                          }}
+                        >
+                          Ver
+                        </a>
+                      ) : (
+                        <span style={{ fontSize: 11, color: C.textFaint }}>—</span>
+                      )}
                     </div>
                   ))}
             </div>
