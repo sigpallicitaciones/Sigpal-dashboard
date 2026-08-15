@@ -12,7 +12,7 @@ const OWNER = "sigpallicitaciones";
 const REPO = "licitaciones-bot";
 const ARCHIVO = "sugerencias.json";
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   const githubToken = process.env.GITHUB_TOKEN;
   if (!githubToken) {
     return res.status(500).json({ error: "Falta configurar GITHUB_TOKEN en Vercel." });
@@ -47,4 +47,4 @@ module.exports = async (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: String(err) });
   }
-};
+}
