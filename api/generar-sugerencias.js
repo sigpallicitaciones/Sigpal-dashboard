@@ -68,7 +68,7 @@ async function guardarArchivoGithub(githubToken, ruta, contenidoObj, sha, mensaj
   }
 }
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Usa POST para generar sugerencias." });
   }
@@ -197,4 +197,4 @@ dashboard, ej. 'Revisar en Rubros' o 'Revisar en Precios Base'>"}`;
   } catch (err) {
     return res.status(500).json({ error: String(err) });
   }
-};
+}
