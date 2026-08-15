@@ -28,6 +28,9 @@ import {
   Search,
   Calendar,
   Loader2,
+  LayoutDashboard,
+  Trophy,
+  ListChecks,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -130,6 +133,44 @@ const DEFAULT_PRICES = [
   { id: 4, item: "Tablero eléctrico IP65 (base)", unit: "unidad", price: 850000 },
   { id: 5, item: "Instalación sistema FV comercial/industrial", unit: "kWp", price: 700000 },
   { id: 6, item: "Lavado tablero energizado", unit: "punto", price: 95000 },
+];
+
+// Tipos de aviso que dispara el bot y por qué canal(es) puede llegar cada
+// uno. El id de cada evento coincide 1 a 1 con lo que revisa
+// canal_activo() en motor_licitaciones.py — si se agrega un evento nuevo
+// acá, hay que agregar el mismo id en el backend.
+const NOTIF_EVENTOS = [
+  {
+    id: "licitacion_nueva",
+    label: "Licitación nueva encontrada",
+    desc: "Cuando el bot detecta una licitación o Compra Ágil que calza con tus rubros.",
+  },
+  {
+    id: "cotizacion_aprobada",
+    label: "Cotización aprobada",
+    desc: "Confirmación con el PDF cuando marcas una cotización como aprobada por WhatsApp.",
+  },
+  {
+    id: "adjudicacion",
+    label: "Adjudicación (ganada o perdida)",
+    desc: "Cuando se resuelve una licitación en la que Sigpal cotizó.",
+  },
+  {
+    id: "heartbeat",
+    label: "Bot activo (sin novedades)",
+    desc: "Aviso de que el bot corrió bien aunque no haya encontrado nada nuevo.",
+  },
+];
+
+const DEFAULT_NOTIF_PREFS = {
+  licitacion_nueva: { correo: true, whatsapp: true },
+  cotizacion_aprobada: { correo: true, whatsapp: true },
+  adjudicacion: { correo: true, whatsapp: true },
+  heartbeat: { correo: true, whatsapp: true },
+};
+
+const TABS_GENERAL = [
+  { id: "resumen", label: "Resumen", icon: LayoutDashboard },
 ];
 
 const TABS = [
@@ -282,6 +323,316 @@ function FieldLabel({ children }) {
   );
 }
 
+function KpiCard({ icon: Icon, label, value, sub, color }) {
+  return (
+    <div
+      style={{
+        background: C.panel,
+        border: `1px solid ${C.lineSoft}`,
+        borderLeft: `3px solid ${color || C.amber}`,
+        borderRadius: 6,
+        padding: 16,
+        flex: "1 1 160px",
+        minWidth: 150,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <Icon size={14} color={color || C.amber} />
+        <span
+          style={{
+            fontSize: 11,
+            color: C.textMute,
+            fontFamily: "JetBrains Mono, monospace",
+            letterSpacing: "0.04em",
+          }}
+        >
+          {label}
+        </span>
+      </div>
+      <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 30, fontWeight: 700, lineHeight: 1 }}>
+        {value}
+      </div>
+      {sub && <div style={{ fontSize: 11.5, color: C.textFaint, marginTop: 6 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function DonutEstados({ enCurso, pendientes, ganadas, perdidas }) {
+  const total = enCurso + pendientes + ganadas + perdidas;
+  const segmentos = [
+    { label: "En curso", valor: enCurso, color: C.amber },
+    { label: "Enviadas (pendiente)", valor: pendientes, color: C.cyan },
+    { label: "Ganadas", valor: ganadas, color: C.green },
+    { label: "Perdidas", valor: perdidas, color: C.red },
+  ].filter((s) => s.valor > 0);
+
+  let acumulado = 0;
+  const stops = segmentos.map((s) => {
+    const desde = total > 0 ? (acumulado / total) * 360 : 0;
+    acumulado += s.valor;
+    const hasta = total > 0 ? (acumulado / total) * 360 : 0;
+    return `${s.color} ${desde}deg ${hasta}deg`;
+  });
+
+  const gradiente = total > 0 ? `conic-gradient(${stops.join(", ")})` : C.raised;
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+      <div
+        style={{
+          width: 110,
+          height: 110,
+          borderRadius: "50%",
+          background: gradiente,
+          flexShrink: 0,
+          position: "relative",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            inset: 14,
+            borderRadius: "50%",
+            background: C.panel,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 22, fontWeight: 700 }}>
+            {total}
+          </div>
+          <div style={{ fontSize: 9, color: C.textFaint, fontFamily: "JetBrains Mono, monospace" }}>
+            TOTAL
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+        {segmentos.length === 0 && (
+          <div style={{ fontSize: 12.5, color: C.textMute }}>Todavía no hay datos suficientes.</div>
+        )}
+        {segmentos.map((s) => (
+          <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+            <span style={{ width: 9, height: 9, borderRadius: "50%", background: s.color, flexShrink: 0 }} />
+            <span style={{ color: C.textMute }}>{s.label}</span>
+            <span style={{ color: C.text, fontFamily: "JetBrains Mono, monospace", marginLeft: 2 }}>
+              {s.valor}
+              {total > 0 && (
+                <span style={{ color: C.textFaint }}> ({Math.round((s.valor / total) * 100)}%)</span>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ResumenGeneral({
+  historial,
+  historialCargando,
+  cotizacionesAbiertas,
+  cotizacionesAbiertasCargando,
+  setTab,
+}) {
+  const enCurso = cotizacionesAbiertas.length;
+  const ganadas = historial.filter((h) => h.resultado === "ganada").length;
+  const perdidas = historial.filter((h) => h.resultado === "perdida").length;
+  const pendientes = historial.filter((h) => h.resultado === "pendiente" || !h.resultado).length;
+  const tasaExito =
+    ganadas + perdidas > 0 ? Math.round((ganadas / (ganadas + perdidas)) * 100) : null;
+
+  const destacadas = cotizacionesAbiertas.slice(0, 5);
+  const recientes = historial
+    .slice()
+    .sort((a, b) => new Date(b.fecha_envio || 0) - new Date(a.fecha_envio || 0))
+    .slice(0, 5);
+
+  const cargando = historialCargando || cotizacionesAbiertasCargando;
+
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 24, fontWeight: 600 }}>
+          Resumen general
+        </div>
+        <div style={{ fontSize: 13, color: C.textMute, marginTop: 3 }}>
+          Estado actual del bot: cotizaciones en curso, resultados y actividad reciente.
+        </div>
+      </div>
+
+      {cargando ? (
+        <div style={{ padding: "20px 0", fontSize: 13, color: C.textMute }}>Cargando datos...</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24 }}>
+            <KpiCard
+              icon={ListChecks}
+              label="EN CURSO"
+              value={enCurso}
+              sub="Cotizaciones listas, aún sin cargar"
+              color={C.amber}
+            />
+            <KpiCard
+              icon={Clock}
+              label="EN RESULTADO PENDIENTE"
+              value={pendientes}
+              sub="Cargadas, esperando adjudicación"
+              color={C.cyan}
+            />
+            <KpiCard
+              icon={Trophy}
+              label="GANADAS"
+              value={ganadas}
+              sub={tasaExito !== null ? `${tasaExito}% de tasa de éxito` : "Sin resultados aún"}
+              color={C.green}
+            />
+            <KpiCard
+              icon={X}
+              label="PERDIDAS"
+              value={perdidas}
+              sub="Adjudicadas a otro proveedor"
+              color={C.red}
+            />
+          </div>
+
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+            <div
+              style={{
+                flex: "2 1 320px",
+                background: C.panel,
+                border: `1px solid ${C.lineSoft}`,
+                borderRadius: 6,
+                padding: 18,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Cotizaciones destacadas</div>
+                <span
+                  onClick={() => setTab("historial")}
+                  style={{ fontSize: 11.5, color: C.cyan, cursor: "pointer", fontFamily: "JetBrains Mono, monospace" }}
+                >
+                  Ver todas →
+                </span>
+              </div>
+              {destacadas.length === 0 && (
+                <div style={{ fontSize: 12.5, color: C.textMute }}>
+                  No hay cotizaciones en curso ahora mismo.
+                </div>
+              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                {destacadas.map((c, i) => (
+                  <div
+                    key={c.codigo}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "9px 0",
+                      borderTop: i === 0 ? "none" : `1px solid ${C.lineSoft}`,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontFamily: "JetBrains Mono, monospace",
+                        fontSize: 11,
+                        color: C.amber,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {c.codigo}
+                    </span>
+                    <span style={{ fontSize: 12.5, color: C.text, flex: 1 }}>{c.nombre}</span>
+                    {c.socios?.some((s) => s.es_activa) && (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontFamily: "JetBrains Mono, monospace",
+                          color: C.cyan,
+                          background: C.panelAlt,
+                          borderRadius: 999,
+                          padding: "2px 8px",
+                          flexShrink: 0,
+                        }}
+                      >
+                        en foco
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div
+              style={{
+                flex: "1 1 260px",
+                background: C.panel,
+                border: `1px solid ${C.lineSoft}`,
+                borderRadius: 6,
+                padding: 18,
+              }}
+            >
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>Licitaciones por estado</div>
+              <DonutEstados enCurso={enCurso} pendientes={pendientes} ganadas={ganadas} perdidas={perdidas} />
+            </div>
+          </div>
+
+          <div
+            style={{
+              background: C.panel,
+              border: `1px solid ${C.lineSoft}`,
+              borderRadius: 6,
+              padding: 18,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Actividad reciente</div>
+              <span
+                onClick={() => setTab("historial")}
+                style={{ fontSize: 11.5, color: C.cyan, cursor: "pointer", fontFamily: "JetBrains Mono, monospace" }}
+              >
+                Ver historial completo →
+              </span>
+            </div>
+            {recientes.length === 0 && (
+              <div style={{ fontSize: 12.5, color: C.textMute }}>
+                Todavía no hay cotizaciones registradas.
+              </div>
+            )}
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {recientes.map((h, i) => (
+                <div
+                  key={h.codigo}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "9px 0",
+                    borderTop: i === 0 ? "none" : `1px solid ${C.lineSoft}`,
+                  }}
+                >
+                  <span style={{ fontSize: 11.5, color: C.textFaint, fontFamily: "JetBrains Mono, monospace", flexShrink: 0 }}>
+                    {fmtFechaHistorial(h.fecha_envio)}
+                  </span>
+                  <span style={{ fontSize: 12.5, color: C.text, flex: 1 }}>{h.nombre}</span>
+                  <span style={{ fontSize: 11.5 }}>
+                    {h.resultado === "ganada" && <span style={{ color: C.green }}>Ganada</span>}
+                    {h.resultado === "perdida" && <span style={{ color: C.red }}>Perdida</span>}
+                    {(h.resultado === "pendiente" || !h.resultado) && (
+                      <span style={{ color: C.textMute }}>Pendiente</span>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main app
 // ---------------------------------------------------------------------------
@@ -317,7 +668,7 @@ function fmtFechaHistorial(iso) {
 export default function App() {
   const guardado = cargarConfig();
 
-  const [tab, setTab] = useState("rubros");
+  const [tab, setTab] = useState("resumen");
   const [categories, setCategories] = useState(guardado?.categories ?? DEFAULT_CATEGORIES);
   const [regions, setRegions] = useState(guardado?.regions ?? ["Metropolitana", "Valparaíso", "O'Higgins"]);
   const [prices, setPrices] = useState(guardado?.prices ?? DEFAULT_PRICES);
@@ -326,13 +677,22 @@ export default function App() {
   const [socios, setSocios] = useState(
     guardado?.socios ?? [{ nombre: "Bryan", email: "sigpallicitaciones@gmail.com", whatsapp: "" }]
   );
+  const [notifPrefs, setNotifPrefs] = useState(
+    guardado?.notifPrefs ?? DEFAULT_NOTIF_PREFS
+  );
   const [newHorario, setNewHorario] = useState("");
   const [savedFlash, setSavedFlash] = useState(false);
 
   // Guarda automáticamente cada vez que cambia cualquier parte de la configuración
   useEffect(() => {
-    guardarConfig({ categories, regions, prices, horarios, sensitivity, socios });
-  }, [categories, regions, prices, horarios, sensitivity, socios]);
+    guardarConfig({ categories, regions, prices, horarios, sensitivity, socios, notifPrefs });
+  }, [categories, regions, prices, horarios, sensitivity, socios, notifPrefs]);
+
+  const toggleNotifCanal = (evento, canal) =>
+    setNotifPrefs((prev) => ({
+      ...prev,
+      [evento]: { ...prev[evento], [canal]: !prev[evento][canal] },
+    }));
 
   const flashSave = () => {
   setSavedFlash(true);
@@ -365,6 +725,7 @@ export default function App() {
           unidad: p.unit,
           precio: p.price,
         })),
+        notificaciones: notifPrefs,
       },
     }),
   }).catch((err) => {
@@ -822,6 +1183,67 @@ export default function App() {
             paddingLeft: 4,
           }}
         >
+          GENERAL
+        </div>
+
+        {TABS_GENERAL.map((t) => {
+          const Icon = t.icon;
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "10px 12px",
+                borderRadius: 6,
+                border: "none",
+                marginBottom: 4,
+                background: active ? C.raised : "transparent",
+                cursor: "pointer",
+                textAlign: "left",
+                position: "relative",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  left: -16,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  width: 3,
+                  height: active ? 18 : 0,
+                  background: C.amber,
+                  borderRadius: 2,
+                  transition: "height .15s ease",
+                }}
+              />
+              <Icon size={15} color={active ? C.amber : C.textMute} strokeWidth={2} />
+              <span
+                style={{
+                  fontSize: 13.5,
+                  fontWeight: 500,
+                  color: active ? C.text : C.textMute,
+                }}
+              >
+                {t.label}
+              </span>
+            </button>
+          );
+        })}
+
+        <div
+          style={{
+            fontFamily: "JetBrains Mono, monospace",
+            fontSize: 10,
+            color: C.textFaint,
+            letterSpacing: "0.08em",
+            margin: "18px 0 10px",
+            paddingLeft: 4,
+          }}
+        >
           CONFIGURACIÓN
         </div>
 
@@ -1065,6 +1487,17 @@ export default function App() {
         </div>
 
         {/* ---------------------------------------------------- RUBROS TAB */}
+        {/* ------------------------------------------------------ RESUMEN TAB */}
+        {tab === "resumen" && (
+          <ResumenGeneral
+            historial={historial}
+            historialCargando={historialCargando}
+            cotizacionesAbiertas={cotizacionesAbiertas}
+            cotizacionesAbiertasCargando={cotizacionesAbiertasCargando}
+            setTab={setTab}
+          />
+        )}
+
         {tab === "rubros" && (
           <div>
             <div style={{ marginBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -1581,9 +2014,85 @@ export default function App() {
             </div>
 
             <SectionNote>
-              El envío por correo ya está conectado y funcionando (vía Gmail). El envío por WhatsApp
-              todavía es un paso pendiente de configurar (requiere WhatsApp Business API) — por ahora
-              estos números quedan guardados aquí, listos para cuando conectemos ese canal.
+              El correo (vía Gmail) y WhatsApp (vía WhatsApp Business API) ya están conectados y
+              funcionando para todos los socios de arriba.
+            </SectionNote>
+
+            <div style={{ marginTop: 32, marginBottom: 18 }}>
+              <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 22, fontWeight: 600 }}>
+                Preferencias por tipo de aviso
+              </div>
+              <div style={{ fontSize: 13, color: C.textMute, marginTop: 3 }}>
+                Qué avisos quieres recibir por cada canal. Se aplica a todos los socios de arriba.
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {NOTIF_EVENTOS.map((ev) => {
+                const pref = notifPrefs[ev.id] ?? { correo: true, whatsapp: true };
+                return (
+                  <div
+                    key={ev.id}
+                    style={{
+                      background: C.panel,
+                      border: `1px solid ${C.lineSoft}`,
+                      borderRadius: 6,
+                      padding: 16,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 16,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 200 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600 }}>{ev.label}</div>
+                      <div style={{ fontSize: 12.5, color: C.textMute, marginTop: 3, lineHeight: 1.5 }}>
+                        {ev.desc}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 22 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                            fontSize: 12,
+                            color: C.textMute,
+                            fontFamily: "JetBrains Mono, monospace",
+                          }}
+                        >
+                          <Mail size={12} /> Correo
+                        </span>
+                        <Toggle on={pref.correo} onClick={() => toggleNotifCanal(ev.id, "correo")} />
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                            fontSize: 12,
+                            color: C.textMute,
+                            fontFamily: "JetBrains Mono, monospace",
+                          }}
+                        >
+                          <Phone size={12} /> WhatsApp
+                        </span>
+                        <Toggle on={pref.whatsapp} onClick={() => toggleNotifCanal(ev.id, "whatsapp")} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <SectionNote>
+              Si apagas ambos canales de un aviso, ese aviso simplemente no se manda — no queda
+              registrado en ningún lado. Por ejemplo, para recibir solo el correo de confirmación
+              cuando apruebas una cotización, deja "Cotización aprobada" con Correo activado y
+              WhatsApp apagado, y apaga los demás avisos por correo si no los quieres.
             </SectionNote>
           </div>
         )}
