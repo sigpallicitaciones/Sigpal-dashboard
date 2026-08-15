@@ -613,6 +613,30 @@ export default async function handler(req, res) {
           const tipoEvento = botonLicitacion.accion === "ver"
             ? "confirmar_licitacion"
             : "descartar_licitacion";
+
+          // Aviso INMEDIATO (responde en <1s, sin esperar a que arranque
+          // GitHub Actions — eso puede tardar 1-2 minutos en frío). No
+          // reemplaza el trabajo pesado (crear la cotización, armar el
+          // PDF con ReportLab en Python) — eso lo sigue haciendo el motor
+          // como siempre, este mensaje solo evita que la persona sienta
+          // que no pasó nada durante esa espera.
+          try {
+            const { estado: estadoActual } = await leerEstado(githubToken);
+            const item = estadoActual?.[numero]?.notificadas?.[botonLicitacion.codigo];
+            const nombreItem = item?.nombre ? `"${item.nombre}"` : "esa licitación";
+            const mensajeAck = botonLicitacion.accion === "ver"
+              ? `📋 Dale, armando la cotización de ${nombreItem}. En un momento te mando el PDF.`
+              : `Ok, descartada ${nombreItem}.`;
+            await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero, mensajeAck);
+          } catch (e) {
+            // Si el aviso instantáneo falla por lo que sea (ej. no se
+            // encontró el item en 'notificadas'), no es grave — el motor
+            // en GitHub Actions igual va a mandar su propio mensaje al
+            // procesar la confirmación. Este aviso es solo una mejora de
+            // percepción de velocidad, no una parte crítica del flujo.
+            console.warn(`No se pudo mandar el aviso instantáneo: ${e}`);
+          }
+
           await dispararEventoCotizacion(githubToken, tipoEvento, botonLicitacion.codigo, numero);
           return res.status(200).send("OK");
         }
