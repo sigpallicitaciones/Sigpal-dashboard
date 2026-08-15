@@ -390,10 +390,25 @@ Si el mensaje del usuario pide modificar, agregar o quitar un ítem de
 {"accion": "eliminar_item", "seccion": "mano_obra", "indice": 2}
 {"accion": "generar_estimacion", "materiales": [{"descripcion": "...", "cantidad": 1, "unidad": "Un.", "precio_unitario": 0}], "mano_obra": [{"descripcion": "...", "cantidad": 1, "unidad": "hora", "precio_unitario": 0}]}
 {"accion": "aprobar_cotizacion"}
+{"accion": "descartar_cotizacion", "codigo": "..."}
 {"accion": "ver_cotizacion"}
 {"accion": "cambiar_cotizacion_activa", "codigo": "..."}
 {"accion": "listar_cotizaciones"}
 {"accion": "sin_cambios", "motivo": "explica brevemente por qué el mensaje no es una instrucción de edición"}
+
+Usa "descartar_cotizacion" cuando el mensaje pida cerrar, descartar, cancelar
+o abandonar una cotización sin enviarla — por ejemplo "cierra esta",
+"descarta esta cotización", "cierra la 1234-56-COT26", "cancela la del
+generador". Esto es distinto de "eliminar_item" (que solo borra UN ítem de
+la lista, no toda la cotización) y de "aprobar_cotizacion" (que sí la
+envía). El campo "codigo" es OPCIONAL: si el mensaje menciona un código o
+describe cuál (aunque no sea la que está en foco ahora mismo), poné ese
+código exacto tal como aparece en la lista de "otras cotizaciones abiertas"
+de abajo; si el mensaje dice simplemente "cierra esta" sin especificar
+cuál, omití "codigo" y se entiende que es la que está en foco. Si el
+mensaje menciona un código que NO aparece en ninguna lista (ni como activa
+ni como abierta), usa "sin_cambios" y explica que no encontraste esa
+cotización entre las abiertas.
 
 "indice" es 0-based, contando desde el primer ítem de esa sección tal como
 aparece en la cotización actual. Antes de usar "modificar_item" o
@@ -753,6 +768,27 @@ export default async function handler(req, res) {
                 } else {
                   textoConfirmacion = "No encontré esa cotización entre las que tienes abiertas. "
                     + describirListaCotizaciones(cotizacionesAbiertas, codigoActivo);
+                }
+              } else if (cambio?.accion === "descartar_cotizacion") {
+                const codigoADescartar = cambio.codigo || codigoActivo;
+                const existe = cotizacionesAbiertas.find((c) => c.codigo === codigoADescartar);
+                if (!existe && codigoADescartar !== codigoActivo) {
+                  textoConfirmacion = "No encontré esa cotización entre las que tienes abiertas. "
+                    + describirListaCotizaciones(cotizacionesAbiertas, codigoActivo);
+                } else {
+                  const nombreDescartada = existe?.nombre || "";
+                  await dispararEventoCotizacion(githubToken, "descartar_cotizacion_activa", codigoADescartar, numero);
+                  // Si se descartó la que estaba en foco, el foco pasa a
+                  // la siguiente abierta (o queda sin ninguna) — eso lo
+                  // resuelve cerrar_cotizacion() del lado de Python, así
+                  // que acá solo reflejamos localmente cuál va a quedar,
+                  // para no perder el estado hasta la próxima interacción.
+                  if (codigoADescartar === codigoActivo) {
+                    const restantes = cotizacionesAbiertas.filter((c) => c.codigo !== codigoADescartar);
+                    nuevoCodigoActivo = restantes.length > 0 ? restantes[0].codigo : null;
+                  }
+                  textoConfirmacion = `🗑️ Descartada${nombreDescartada ? `: ${nombreDescartada}` : ""} `
+                    + `(${codigoADescartar}). No se envió ni queda en el historial.`;
                 }
               } else {
                 const seAplico = aplicarCambio(cotizacion, cambio);
