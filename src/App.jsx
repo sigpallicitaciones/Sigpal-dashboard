@@ -619,6 +619,40 @@ export default function App() {
     }
   };
 
+  // Eliminar una cotización aprobada del historial — pide la clave de
+  // acceso de nuevo como confirmación extra, aunque la sesión ya esté
+  // desbloqueada, justo para que un clic accidental no borre nada. No
+  // se puede deshacer: se saca de historial_cotizaciones.json.
+  const eliminarCotizacionHistorial = async (codigo, nombre) => {
+    const clave = window.prompt(
+      `Para eliminar "${nombre}" del historial, ingresa la clave de acceso:`
+    );
+    if (clave === null) return; // canceló el prompt
+    if (clave !== CLAVE_ACCESO) {
+      window.alert("Clave incorrecta. No se eliminó nada.");
+      return;
+    }
+    if (!window.confirm(
+      `¿Confirmas eliminar "${nombre}" del historial? Esta acción no se puede deshacer.`
+    )) return;
+
+    try {
+      const resp = await fetch("/api/eliminar-cotizacion", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ codigo }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        window.alert(data.error || "No se pudo eliminar la cotización.");
+        return;
+      }
+      setHistorial((h) => h.filter((item) => item.codigo !== codigo));
+    } catch (err) {
+      window.alert("Error al eliminar: " + err);
+    }
+  };
+
   if (!unlocked) {
     return (
       <div
@@ -1805,7 +1839,7 @@ export default function App() {
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "90px 1fr 150px 60px 110px 100px 70px",
+                  gridTemplateColumns: "90px 1fr 150px 60px 110px 100px 60px 70px",
                   padding: "10px 14px",
                   background: C.panelAlt,
                   borderBottom: `1px solid ${C.lineSoft}`,
@@ -1819,6 +1853,7 @@ export default function App() {
                 <FieldLabel>Decisión</FieldLabel>
                 <FieldLabel>Resultado</FieldLabel>
                 <FieldLabel>PDF</FieldLabel>
+                <FieldLabel></FieldLabel>
               </div>
               {historialCargando && (
                 <div style={{ padding: "24px 14px", fontSize: 13, color: C.textMute }}>
@@ -1849,7 +1884,7 @@ export default function App() {
                       key={h.codigo}
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "90px 1fr 150px 60px 110px 100px 70px",
+                        gridTemplateColumns: "90px 1fr 150px 60px 110px 100px 60px 70px",
                         padding: "12px 14px",
                         gap: 10,
                         alignItems: "center",
@@ -1894,6 +1929,21 @@ export default function App() {
                       ) : (
                         <span style={{ fontSize: 11, color: C.textFaint }}>—</span>
                       )}
+                      <button
+                        onClick={() => eliminarCotizacionHistorial(h.codigo, h.nombre)}
+                        style={{
+                          fontSize: 11,
+                          fontFamily: "JetBrains Mono, monospace",
+                          color: C.red || "#c44",
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          padding: 0,
+                          textAlign: "left",
+                        }}
+                      >
+                        Eliminar
+                      </button>
                     </div>
                   ))}
             </div>
@@ -1901,7 +1951,8 @@ export default function App() {
             <SectionNote>
               Acá queda cada cotización que se aprueba por WhatsApp. Cuando la licitación se adjudica, el
               bot revisa automáticamente si Sigpal ganó o no, y actualiza el resultado — avisando por
-              correo y WhatsApp si se ganó.
+              correo y WhatsApp si se ganó. Eliminar del historial pide la clave de acceso de nuevo como
+              confirmación extra — es una acción que no se puede deshacer.
             </SectionNote>
           </div>
         )}
