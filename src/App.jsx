@@ -37,20 +37,31 @@ import {
 // Design tokens
 // ---------------------------------------------------------------------------
 const C = {
-  bg: "#17191C",
-  panel: "#1F2226",
-  panelAlt: "#262A2F",
-  raised: "#2D3238",
-  line: "#383D44",
-  lineSoft: "#2A2E34",
-  amber: "#E6A339",
-  amberDim: "#8A6B2E",
-  cyan: "#4FAFC4",
-  text: "#EDEAE4",
-  textMute: "#9AA0A8",
-  textFaint: "#666B72",
-  green: "#6FA875",
-  red: "#CC5B45",
+  bg: "#EEF2F8",
+  panel: "#FFFFFF",
+  panelAlt: "#F4F7FB",
+  raised: "#E7EDF6",
+  line: "#D6DEE9",
+  lineSoft: "#E3E9F1",
+  amber: "#2F6FED",
+  amberDim: "#8FB0F5",
+  amberSoft: "#E8F0FE",
+  cyan: "#0EA5B7",
+  cyanSoft: "#E1F5F7",
+  text: "#1B2434",
+  textMute: "#5C6B7E",
+  textFaint: "#94A1B3",
+  green: "#2FA860",
+  greenSoft: "#E5F6EC",
+  red: "#E4433F",
+  redSoft: "#FCEAEA",
+  purple: "#7C5CE0",
+  purpleSoft: "#EFEAFC",
+  sidebarBg: "#123B8F",
+  sidebarBgRaised: "#1B4BAA",
+  sidebarLine: "#2A57AC",
+  sidebarText: "#FFFFFF",
+  sidebarMute: "#AFC5EF",
 };
 
 const FONTS = `
@@ -246,8 +257,8 @@ function Rivet() {
         width: 6,
         height: 6,
         borderRadius: 999,
-        background: "#0F1113",
-        boxShadow: "inset 0 1px 1px rgba(255,255,255,0.08), 0 1px 0 rgba(0,0,0,0.4)",
+        background: C.line,
+        boxShadow: "inset 0 1px 1px rgba(255,255,255,0.6), 0 1px 0 rgba(0,0,0,0.06)",
       }}
     />
   );
@@ -261,7 +272,7 @@ function Toggle({ on, onClick }) {
         width: 42,
         height: 22,
         borderRadius: 999,
-        background: on ? "#3A2F16" : C.raised,
+        background: on ? C.amberSoft : C.raised,
         border: `1px solid ${on ? C.amberDim : C.line}`,
         position: "relative",
         cursor: "pointer",
@@ -278,7 +289,7 @@ function Toggle({ on, onClick }) {
           height: 17,
           borderRadius: 999,
           background: on ? C.amber : C.textFaint,
-          boxShadow: on ? `0 0 8px ${C.amber}99` : "none",
+          boxShadow: on ? `0 0 8px ${C.amber}66` : "none",
           transition: "left .15s ease, background .15s ease",
         }}
       />
@@ -323,33 +334,46 @@ function FieldLabel({ children }) {
   );
 }
 
-function KpiCard({ icon: Icon, label, value, sub, color }) {
+function KpiCard({ icon: Icon, label, value, sub, color, soft }) {
   return (
     <div
       style={{
         background: C.panel,
         border: `1px solid ${C.lineSoft}`,
-        borderLeft: `3px solid ${color || C.amber}`,
-        borderRadius: 6,
+        borderRadius: 8,
         padding: 16,
         flex: "1 1 160px",
         minWidth: 150,
+        boxShadow: "0 1px 2px rgba(20,30,60,0.05)",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <Icon size={14} color={color || C.amber} />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 8,
+            background: soft || C.amberSoft,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          <Icon size={16} color={color || C.amber} strokeWidth={2.2} />
+        </div>
         <span
           style={{
             fontSize: 11,
             color: C.textMute,
             fontFamily: "JetBrains Mono, monospace",
-            letterSpacing: "0.04em",
+            letterSpacing: "0.03em",
           }}
         >
           {label}
         </span>
       </div>
-      <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 30, fontWeight: 700, lineHeight: 1 }}>
+      <div style={{ fontFamily: "Barlow Condensed, sans-serif", fontSize: 30, fontWeight: 700, lineHeight: 1, color: C.text }}>
         {value}
       </div>
       {sub && <div style={{ fontSize: 11.5, color: C.textFaint, marginTop: 6 }}>{sub}</div>}
@@ -361,7 +385,7 @@ function DonutEstados({ enCurso, pendientes, ganadas, perdidas }) {
   const total = enCurso + pendientes + ganadas + perdidas;
   const segmentos = [
     { label: "En curso", valor: enCurso, color: C.amber },
-    { label: "Enviadas (pendiente)", valor: pendientes, color: C.cyan },
+    { label: "Enviadas (pendiente)", valor: pendientes, color: C.purple },
     { label: "Ganadas", valor: ganadas, color: C.green },
     { label: "Perdidas", valor: perdidas, color: C.red },
   ].filter((s) => s.valor > 0);
@@ -473,13 +497,15 @@ function ResumenGeneral({
               value={enCurso}
               sub="Cotizaciones listas, aún sin cargar"
               color={C.amber}
+              soft={C.amberSoft}
             />
             <KpiCard
               icon={Clock}
               label="EN RESULTADO PENDIENTE"
               value={pendientes}
               sub="Cargadas, esperando adjudicación"
-              color={C.cyan}
+              color={C.purple}
+              soft={C.purpleSoft}
             />
             <KpiCard
               icon={Trophy}
@@ -487,6 +513,7 @@ function ResumenGeneral({
               value={ganadas}
               sub={tasaExito !== null ? `${tasaExito}% de tasa de éxito` : "Sin resultados aún"}
               color={C.green}
+              soft={C.greenSoft}
             />
             <KpiCard
               icon={X}
@@ -494,6 +521,7 @@ function ResumenGeneral({
               value={perdidas}
               sub="Adjudicadas a otro proveedor"
               color={C.red}
+              soft={C.redSoft}
             />
           </div>
 
@@ -1094,7 +1122,7 @@ export default function App() {
               padding: "10px",
               borderRadius: 6,
               border: `1px solid ${C.amberDim}`,
-              background: "#2E2412",
+              background: C.amberSoft,
               color: C.amber,
               fontSize: 13.5,
               fontWeight: 600,
@@ -1126,8 +1154,9 @@ export default function App() {
         style={{
           width: 240,
           flexShrink: 0,
-          background: C.panel,
-          borderRight: `1px solid ${C.line}`,
+          background: C.sidebarBg,
+          color: C.sidebarText,
+          borderRight: `1px solid ${C.sidebarLine}`,
           flexDirection: "column",
           padding: "22px 16px",
         }}
@@ -1138,14 +1167,14 @@ export default function App() {
               width: 30,
               height: 30,
               borderRadius: 6,
-              background: C.raised,
-              border: `1px solid ${C.line}`,
+              background: C.sidebarBgRaised,
+              border: `1px solid ${C.sidebarLine}`,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
             }}
           >
-            <Zap size={16} color={C.amber} strokeWidth={2.4} />
+            <Zap size={16} color="#FFFFFF" strokeWidth={2.4} />
           </div>
           <div>
             <div
@@ -1163,7 +1192,7 @@ export default function App() {
               style={{
                 fontFamily: "JetBrains Mono, monospace",
                 fontSize: 9.5,
-                color: C.textFaint,
+                color: C.sidebarMute,
                 letterSpacing: "0.1em",
                 marginTop: 2,
               }}
@@ -1177,7 +1206,7 @@ export default function App() {
           style={{
             fontFamily: "JetBrains Mono, monospace",
             fontSize: 10,
-            color: C.textFaint,
+            color: C.sidebarMute,
             letterSpacing: "0.08em",
             marginBottom: 10,
             paddingLeft: 4,
@@ -1201,7 +1230,7 @@ export default function App() {
                 borderRadius: 6,
                 border: "none",
                 marginBottom: 4,
-                background: active ? C.raised : "transparent",
+                background: active ? "rgba(255,255,255,0.16)" : "transparent",
                 cursor: "pointer",
                 textAlign: "left",
                 position: "relative",
@@ -1215,17 +1244,17 @@ export default function App() {
                   transform: "translateY(-50%)",
                   width: 3,
                   height: active ? 18 : 0,
-                  background: C.amber,
+                  background: "#FFFFFF",
                   borderRadius: 2,
                   transition: "height .15s ease",
                 }}
               />
-              <Icon size={15} color={active ? C.amber : C.textMute} strokeWidth={2} />
+              <Icon size={15} color={active ? "#FFFFFF" : C.sidebarMute} strokeWidth={2} />
               <span
                 style={{
                   fontSize: 13.5,
                   fontWeight: 500,
-                  color: active ? C.text : C.textMute,
+                  color: active ? "#FFFFFF" : C.sidebarMute,
                 }}
               >
                 {t.label}
@@ -1238,7 +1267,7 @@ export default function App() {
           style={{
             fontFamily: "JetBrains Mono, monospace",
             fontSize: 10,
-            color: C.textFaint,
+            color: C.sidebarMute,
             letterSpacing: "0.08em",
             margin: "18px 0 10px",
             paddingLeft: 4,
@@ -1262,7 +1291,7 @@ export default function App() {
                 borderRadius: 6,
                 border: "none",
                 marginBottom: 4,
-                background: active ? C.raised : "transparent",
+                background: active ? "rgba(255,255,255,0.16)" : "transparent",
                 cursor: "pointer",
                 textAlign: "left",
                 position: "relative",
@@ -1276,17 +1305,17 @@ export default function App() {
                   transform: "translateY(-50%)",
                   width: 3,
                   height: active ? 18 : 0,
-                  background: C.amber,
+                  background: "#FFFFFF",
                   borderRadius: 2,
                   transition: "height .15s ease",
                 }}
               />
-              <Icon size={15} color={active ? C.amber : C.textMute} strokeWidth={2} />
+              <Icon size={15} color={active ? "#FFFFFF" : C.sidebarMute} strokeWidth={2} />
               <span
                 style={{
                   fontSize: 13.5,
                   fontWeight: 500,
-                  color: active ? C.text : C.textMute,
+                  color: active ? "#FFFFFF" : C.sidebarMute,
                 }}
               >
                 {t.label}
@@ -1299,7 +1328,7 @@ export default function App() {
           style={{
             fontFamily: "JetBrains Mono, monospace",
             fontSize: 10,
-            color: C.textFaint,
+            color: C.sidebarMute,
             letterSpacing: "0.08em",
             margin: "18px 0 10px",
             paddingLeft: 4,
@@ -1323,7 +1352,7 @@ export default function App() {
                 borderRadius: 6,
                 border: "none",
                 marginBottom: 4,
-                background: active ? C.raised : "transparent",
+                background: active ? "rgba(255,255,255,0.16)" : "transparent",
                 cursor: "pointer",
                 textAlign: "left",
                 position: "relative",
@@ -1337,17 +1366,17 @@ export default function App() {
                   transform: "translateY(-50%)",
                   width: 3,
                   height: active ? 18 : 0,
-                  background: C.cyan,
+                  background: "#FFFFFF",
                   borderRadius: 2,
                   transition: "height .15s ease",
                 }}
               />
-              <Icon size={15} color={active ? C.cyan : C.textMute} strokeWidth={2} />
+              <Icon size={15} color={active ? "#FFFFFF" : C.sidebarMute} strokeWidth={2} />
               <span
                 style={{
                   fontSize: 13.5,
                   fontWeight: 500,
-                  color: active ? C.text : C.textMute,
+                  color: active ? "#FFFFFF" : C.sidebarMute,
                 }}
               >
                 {t.label}
@@ -1356,8 +1385,8 @@ export default function App() {
                 <span
                   style={{
                     marginLeft: "auto",
-                    background: C.cyan,
-                    color: "#0F1113",
+                    background: "#FFFFFF",
+                    color: C.sidebarBg,
                     fontSize: 10,
                     fontWeight: 700,
                     borderRadius: 999,
@@ -1377,16 +1406,16 @@ export default function App() {
             style={{
               padding: "10px 12px",
               borderRadius: 6,
-              background: C.panelAlt,
-              border: `1px solid ${C.lineSoft}`,
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.18)",
             }}
           >
-            <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9.5, color: C.textFaint, letterSpacing: "0.06em" }}>
+            <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9.5, color: C.sidebarMute, letterSpacing: "0.06em" }}>
               ESTADO
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5 }}>
-              <div style={{ width: 6, height: 6, borderRadius: 999, background: C.green }} />
-              <span style={{ fontSize: 12, color: C.textMute }}>Guardado en este navegador</span>
+              <div style={{ width: 6, height: 6, borderRadius: 999, background: "#6FE39A" }} />
+              <span style={{ fontSize: 12, color: "#FFFFFF" }}>Guardado en este navegador</span>
             </div>
           </div>
         </div>
@@ -1442,26 +1471,68 @@ export default function App() {
             </div>
           </div>
 
-          <button
-            onClick={flashSave}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-              padding: "9px 16px",
-              borderRadius: 6,
-              border: `1px solid ${savedFlash ? C.green : C.amberDim}`,
-              background: savedFlash ? "#20301F" : "#2E2412",
-              color: savedFlash ? C.green : C.amber,
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
-              transition: "all .15s ease",
-            }}
-          >
-            {savedFlash ? <Check size={15} /> : <Save size={15} />}
-            {savedFlash ? "Guardado" : "Guardar cambios"}
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              title="Cotizaciones en curso"
+              style={{
+                position: "relative",
+                width: 38,
+                height: 38,
+                borderRadius: 8,
+                background: C.panelAlt,
+                border: `1px solid ${C.lineSoft}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              <Bell size={16} color={C.textMute} />
+              {cotizacionesAbiertas.length > 0 && (
+                <span
+                  style={{
+                    position: "absolute",
+                    top: -4,
+                    right: -4,
+                    background: C.red,
+                    color: "#FFFFFF",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    borderRadius: 999,
+                    minWidth: 16,
+                    height: 16,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: "0 3px",
+                    fontFamily: "JetBrains Mono, monospace",
+                  }}
+                >
+                  {cotizacionesAbiertas.length}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={flashSave}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 7,
+                padding: "9px 16px",
+                borderRadius: 6,
+                border: `1px solid ${savedFlash ? C.green : C.amberDim}`,
+                background: savedFlash ? C.greenSoft : C.amberSoft,
+                color: savedFlash ? C.green : C.amber,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                transition: "all .15s ease",
+              }}
+            >
+              {savedFlash ? <Check size={15} /> : <Save size={15} />}
+              {savedFlash ? "Guardado" : "Guardar cambios"}
+            </button>
+          </div>
         </div>
 
         {/* Mobile tabs */}
@@ -1474,7 +1545,7 @@ export default function App() {
                 padding: "7px 12px",
                 borderRadius: 999,
                 border: `1px solid ${tab === t.id ? C.amberDim : C.line}`,
-                background: tab === t.id ? "#2E2412" : "transparent",
+                background: tab === t.id ? C.amberSoft : "transparent",
                 color: tab === t.id ? C.amber : C.textMute,
                 fontSize: 12.5,
                 whiteSpace: "nowrap",
@@ -1518,7 +1589,7 @@ export default function App() {
                   padding: "9px 14px",
                   borderRadius: 6,
                   border: `1px solid ${C.amberDim}`,
-                  background: "#2E2412",
+                  background: C.amberSoft,
                   color: C.amber,
                   fontSize: 12.5,
                   fontWeight: 600,
@@ -1668,7 +1739,7 @@ export default function App() {
                       padding: "10px 12px",
                       borderRadius: 6,
                       border: `1px solid ${on ? C.amberDim : C.lineSoft}`,
-                      background: on ? "#2E2412" : C.panel,
+                      background: on ? C.amberSoft : C.panel,
                       color: on ? C.amber : C.textMute,
                       fontSize: 12.5,
                       cursor: "pointer",
@@ -1854,7 +1925,7 @@ export default function App() {
                   padding: "8px 14px",
                   borderRadius: 6,
                   border: `1px solid ${C.amberDim}`,
-                  background: "#2E2412",
+                  background: C.amberSoft,
                   color: C.amber,
                   fontSize: 12.5,
                   cursor: "pointer",
@@ -2146,7 +2217,7 @@ export default function App() {
                   padding: "11px",
                   borderRadius: 6,
                   border: `1px solid ${C.amberDim}`,
-                  background: "#2E2412",
+                  background: C.amberSoft,
                   color: C.amber,
                   fontSize: 13.5,
                   fontWeight: 600,
@@ -2173,7 +2244,7 @@ export default function App() {
                     borderRadius: 6,
                     fontSize: 12.5,
                     lineHeight: 1.5,
-                    background: resultadoBusqueda.ok ? "#1E2A20" : "#2A1E1E",
+                    background: resultadoBusqueda.ok ? C.greenSoft : C.redSoft,
                     border: `1px solid ${resultadoBusqueda.ok ? C.green : C.red}55`,
                     color: resultadoBusqueda.ok ? C.green : C.red,
                   }}
@@ -2205,7 +2276,7 @@ export default function App() {
                   padding: "11px",
                   borderRadius: 6,
                   border: `1px solid ${C.amberDim}`,
-                  background: "#2E2412",
+                  background: C.amberSoft,
                   color: C.amber,
                   fontSize: 13.5,
                   fontWeight: 600,
@@ -2232,7 +2303,7 @@ export default function App() {
                     borderRadius: 6,
                     fontSize: 12.5,
                     lineHeight: 1.5,
-                    background: resultadoBusquedaCompraAgil.ok ? "#1E2A20" : "#2A1E1E",
+                    background: resultadoBusquedaCompraAgil.ok ? C.greenSoft : C.redSoft,
                     border: `1px solid ${resultadoBusquedaCompraAgil.ok ? C.green : C.red}55`,
                     color: resultadoBusquedaCompraAgil.ok ? C.green : C.red,
                   }}
@@ -2443,7 +2514,7 @@ export default function App() {
                         style={{
                           fontSize: 11,
                           fontFamily: "JetBrains Mono, monospace",
-                          color: C.red || "#c44",
+                          color: C.red,
                           background: "transparent",
                           border: "none",
                           cursor: "pointer",
@@ -2512,7 +2583,7 @@ export default function App() {
               <div
                 style={{
                   background: "rgba(220,80,80,0.08)",
-                  border: `1px solid ${C.red || "#c44"}`,
+                  border: `1px solid ${C.red}`,
                   borderRadius: 6,
                   padding: 14,
                   fontSize: 13,
