@@ -482,6 +482,18 @@ export default function App() {
     cargarSugerencias();
   }, []);
 
+  // --- Cotizaciones abiertas (en curso, todavía no aprobadas) -------------
+  const [cotizacionesAbiertas, setCotizacionesAbiertas] = useState([]);
+  const [cotizacionesAbiertasCargando, setCotizacionesAbiertasCargando] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/leer-cotizaciones-abiertas")
+      .then((r) => r.json())
+      .then((data) => setCotizacionesAbiertas(data?.abiertas ?? []))
+      .catch(() => setCotizacionesAbiertas([]))
+      .finally(() => setCotizacionesAbiertasCargando(false));
+  }, []);
+
   const generarSugerencias = async () => {
     setGenerandoSugerencias(true);
     setSugerenciasError(null);
@@ -1708,6 +1720,65 @@ export default function App() {
                 Todo lo que el bot detectó, analizó y en qué terminó cada caso.
               </div>
             </div>
+
+            {!cotizacionesAbiertasCargando && cotizacionesAbiertas.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 8, color: C.text }}>
+                  Cotizaciones en curso ({cotizacionesAbiertas.length}) — todavía no enviadas
+                </div>
+                <div
+                  style={{
+                    background: C.panel,
+                    border: `1px solid ${C.lineSoft}`,
+                    borderRadius: 6,
+                    overflow: "hidden",
+                  }}
+                >
+                  {cotizacionesAbiertas.map((c, i) => (
+                    <div
+                      key={c.codigo}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "10px 14px",
+                        borderTop: i === 0 ? "none" : `1px solid ${C.lineSoft}`,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontFamily: "JetBrains Mono, monospace",
+                          fontSize: 11.5,
+                          color: C.amber,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {c.codigo}
+                      </span>
+                      <span style={{ fontSize: 12.5, color: C.text, flex: 1 }}>{c.nombre}</span>
+                      {c.socios?.some((s) => s.es_activa) && (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontFamily: "JetBrains Mono, monospace",
+                            color: C.cyan,
+                            background: C.panelAlt,
+                            borderRadius: 999,
+                            padding: "2px 8px",
+                          }}
+                        >
+                          en foco
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ fontSize: 11.5, color: C.textFaint, marginTop: 6 }}>
+                  Para descartar una sin enviarla, escribí por WhatsApp "cierra la [código]" o "descarta
+                  esta". Para aprobarla y enviarla, escribí "aprobada".
+                </div>
+              </div>
+            )}
 
             <div
               style={{
