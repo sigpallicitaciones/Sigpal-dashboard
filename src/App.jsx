@@ -2551,7 +2551,10 @@ export default function App() {
                       <span style={{ fontSize: 12, color: C.textMute, fontFamily: "JetBrains Mono, monospace" }}>
                         {fmtFechaHistorial(h.fecha_envio)}
                       </span>
-                      <span style={{ fontSize: 13 }}>{h.nombre}</span>
+                      <span style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+  {h.nombre}
+  {h.origen === "externa" && <OrigenBadge />}
+</span>
                       <span style={{ fontSize: 12, color: C.textMute }}>{h.rubro}</span>
                       <span
                         style={{
