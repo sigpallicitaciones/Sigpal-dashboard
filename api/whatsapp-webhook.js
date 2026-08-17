@@ -842,6 +842,48 @@ export default async function handler(req, res) {
             return res.status(200).send("OK");
           }
 
+          // --- Texto libre SIN cotización activa ---------------------
+          // Antes esto caía en silencio al bloque genérico de abajo. Ahora
+          // al menos respondemos algo: si tiene cotizaciones abiertas pero
+          // ninguna en foco, se las mostramos (y si el mensaje menciona un
+          // código que calza con una de ellas, la ponemos en foco). Si no
+          // tiene ninguna abierta, se lo decimos en vez de dejarlo en visto.
+          if (!codigoActivo && tipo === "text" && anthropicKey) {
+            const cotizacionesAbiertas = entradaPrevia.cotizaciones_abiertas || [];
+            let textoRespuesta;
+            let nuevoCodigoActivo = null;
+
+            if (cotizacionesAbiertas.length === 0) {
+              textoRespuesta = "No tienes ninguna cotización abierta ahora mismo. "
+                + "Cuando llegue una licitación nueva, respóndeme \"ver\" para empezar a cotizarla.";
+            } else {
+              const textoNorm = normalizarTexto(texto);
+              const coincidencia = cotizacionesAbiertas.find(
+                (c) => textoNorm.includes(normalizarTexto(c.codigo))
+              );
+              if (coincidencia) {
+                nuevoCodigoActivo = coincidencia.codigo;
+                textoRespuesta = `✅ Foco en: ${coincidencia.nombre} (${coincidencia.codigo}). `
+                  + `Ahora tus mensajes van a editar esta cotización.`;
+              } else {
+                textoRespuesta = describirListaCotizaciones(cotizacionesAbiertas, null);
+              }
+            }
+
+            await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero, textoRespuesta);
+
+            const nuevaEntradaSinFoco = {
+              ...entradaPrevia,
+              "última_interacción": ahoraISO,
+              "último_mensaje": texto,
+              "notificaciones_activas": true,
+              "cotizacion_activa": nuevoCodigoActivo,
+            };
+            estado[numero] = nuevaEntradaSinFoco;
+            await guardarEstado(githubToken, estado, sha);
+            return res.status(200).send("OK");
+          }
+
           // OJO: se arma la entrada nueva explícitamente (sin usar spread
           // de entradaPrevia completa) para no arrastrar campos viejos sin
           // tilde ("ultima_interaccion", "ultimo_mensaje") que quedaron de
