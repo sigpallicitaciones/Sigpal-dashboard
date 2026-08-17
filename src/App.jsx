@@ -2807,7 +2807,26 @@ export default function App() {
     </div>
   );
 }
-
+function OrigenBadge() {
+  return (
+    <span
+      title="Cotización creada por fuera del bot y registrada por WhatsApp"
+      style={{
+        fontSize: 10,
+        color: C.purple,
+        fontFamily: "JetBrains Mono, monospace",
+        border: `1px solid ${C.purple}55`,
+        background: C.purpleSoft,
+        borderRadius: 4,
+        padding: "1px 6px",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+      }}
+    >
+      Externa
+    </span>
+  );
+}
 function DecisionBadge({ value }) {
   const map = {
     enviada: { color: C.cyan, label: "Enviada" },
