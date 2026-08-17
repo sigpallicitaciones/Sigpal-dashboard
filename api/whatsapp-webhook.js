@@ -18,6 +18,7 @@
 const OWNER = "sigpallicitaciones";
 const REPO = "licitaciones-bot";
 const ESTADO_FILE = "estado_whatsapp.json";
+const HISTORIAL_FILE = "historial_cotizaciones.json";
 const WHATSAPP_API_VERSION = "v20.0";
 
 // Quita tildes y pasa a minúsculas, para comparar texto de botones sin
@@ -536,6 +537,356 @@ async function dispararEventoCotizacion(githubToken, tipoEvento, codigo, numero)
   }
 }
 
+// ============================================================================
+// COTIZACIONES EXTERNAS — recepción de PDF creado fuera del bot por WhatsApp
+// ============================================================================
+//
+// Flujo:
+//   1) Llega un mensaje tipo "document" (PDF) -> se descarga desde la API de
+//      WhatsApp y se le pide a Claude que extraiga los datos clave.
+//   2) Se responde con un resumen + botones "Confirmar" / "Corregir".
+//   3) "Confirmar" -> se guarda el PDF en pdfs/{codigo}_APROBADA.pdf y se
+//      agrega la entrada a historial_cotizaciones.json (origen: "externa").
+//      "Corregir" -> el socio escribe en texto libre qué está mal, Claude
+//      reinterpreta sobre los datos ya extraídos, y se vuelve a confirmar.
+//
+// Esquema de historial_cotizaciones.json confirmado contra
+// registrar_cotizacion_enviada() en motor_licitaciones.py. El sufijo
+// "_APROBADA" del PDF confirmado contra ver-pdf.js (el link "Ver" de la
+// tabla de Historial pega con &aprobada=1).
+
+// Paso 1: el mensaje solo trae un media_id. Hay que pedirle a la API de Meta
+// la URL real de descarga (expira rápido, por eso no se guarda, se pide de
+// nuevo cada vez que se necesita el archivo).
+async function obtenerUrlMedia(whatsappToken, mediaId) {
+  const resp = await fetch(
+    `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${mediaId}`,
+    { headers: { Authorization: `Bearer ${whatsappToken}` } }
+  );
+  if (!resp.ok) {
+    throw new Error(`No se pudo obtener URL del media ${mediaId}: ${resp.status}`);
+  }
+  const data = await resp.json();
+  return data.url;
+}
+
+// Paso 2: descarga el archivo en sí (requiere el mismo token en el header,
+// la URL de Meta no es pública). Devuelve el contenido en base64, listo para
+// mandar a Claude o subir a GitHub.
+async function descargarMediaBase64(whatsappToken, urlMedia) {
+  const resp = await fetch(urlMedia, {
+    headers: { Authorization: `Bearer ${whatsappToken}` },
+  });
+  if (!resp.ok) {
+    throw new Error(`No se pudo descargar el archivo: ${resp.status}`);
+  }
+  const arrayBuffer = await resp.arrayBuffer();
+  return Buffer.from(arrayBuffer).toString("base64");
+}
+
+// Le pasa el PDF completo a Claude (como documento, no como texto) y le pide
+// que devuelva SOLO los campos que necesitamos para registrar la cotización.
+async function extraerDatosCotizacion(anthropicKey, pdfBase64) {
+  const systemPrompt = `Eres un asistente que extrae datos clave de un PDF de
+cotización de Sigpal Soluciones SpA (empresa chilena de metalmecánica /
+eléctrica / solar) para registrarla en un sistema de seguimiento de
+licitaciones de Mercado Público. Responde ÚNICAMENTE con un objeto JSON
+válido, sin texto adicional, sin markdown.
+
+Formato esperado:
+{
+  "es_cotizacion": true,
+  "codigo": "1234567-89-COT26",
+  "organismo": "Nombre del organismo/cliente",
+  "nombre_proyecto": "Nombre o descripción breve del proyecto/licitación",
+  "monto_total": 1904238,
+  "fecha_cierre": "2026-08-19" o null si no aparece,
+  "numero_correlativo": "COT-2026-0005" o null si no aparece
+}
+
+Si el PDF no parece ser una cotización de Sigpal (por ejemplo es una factura,
+una ficha técnica, u otro documento), responde:
+{"es_cotizacion": false, "motivo": "breve explicación"}
+
+"codigo" es el código de Mercado Público (formato típico: números-números-
+LETRAS+año, ej. "1173466-32-COT26" o "758-391-COT26"). "monto_total" es el
+monto final con IVA incluido, como número entero sin puntos ni símbolo $.`;
+
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": anthropicKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-5",
+      max_tokens: 1000,
+      system: systemPrompt,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "document",
+              source: { type: "base64", media_type: "application/pdf", data: pdfBase64 },
+            },
+            { type: "text", text: "Extrae los datos de esta cotización según el formato indicado." },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!resp.ok) {
+    const detalle = await resp.text();
+    console.error(`Error llamando a Claude para extraer cotización: ${resp.status} ${detalle}`);
+    return null;
+  }
+
+  const data = await resp.json();
+  const textoRespuesta = data?.content?.[0]?.text || "";
+  try {
+    const limpio = textoRespuesta.replace(/```json|```/g, "").trim();
+    return JSON.parse(limpio);
+  } catch (err) {
+    console.error("No se pudo parsear la extracción de Claude:", textoRespuesta);
+    return null;
+  }
+}
+
+// Reinterpreta los datos extraídos a partir de una corrección en texto libre
+// del socio (ej. "el código está malo, es 758-391-COT26").
+async function corregirDatosCotizacion(anthropicKey, datosActuales, mensajeCorreccion) {
+  const systemPrompt = `Estos son los datos extraídos de una cotización:
+${JSON.stringify(datosActuales, null, 2)}
+
+El usuario está corrigiendo uno o más de estos campos en lenguaje natural.
+Responde ÚNICAMENTE con el objeto JSON completo actualizado (mismo formato
+de arriba, con TODOS los campos, no solo los que cambiaron), sin texto
+adicional ni markdown.`;
+
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": anthropicKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-5",
+      max_tokens: 800,
+      system: systemPrompt,
+      messages: [{ role: "user", content: mensajeCorreccion }],
+    }),
+  });
+
+  if (!resp.ok) {
+    console.error(`Error llamando a Claude para corregir cotización: ${resp.status}`);
+    return datosActuales;
+  }
+
+  const data = await resp.json();
+  const textoRespuesta = data?.content?.[0]?.text || "";
+  try {
+    const limpio = textoRespuesta.replace(/```json|```/g, "").trim();
+    return JSON.parse(limpio);
+  } catch (err) {
+    console.error("No se pudo parsear la corrección de Claude:", textoRespuesta);
+    return datosActuales;
+  }
+}
+
+// Sube el PDF a pdfs/{codigo}_APROBADA.pdf — mismo sufijo que usa
+// motor_licitaciones.py para las cotizaciones aprobadas, y el mismo que
+// espera ver-pdf.js cuando se pide con &aprobada=1 (como hace el link "Ver"
+// de la tabla de Historial).
+async function guardarPDFExterno(githubToken, codigo, pdfBase64) {
+  const ruta = `pdfs/${codigo}_APROBADA.pdf`;
+
+  let shaExistente = null;
+  const respGet = await fetch(
+    `https://api.github.com/repos/${OWNER}/${REPO}/contents/${ruta}`,
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${githubToken}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    }
+  );
+  if (respGet.ok) {
+    const dataExistente = await respGet.json();
+    shaExistente = dataExistente.sha;
+  }
+
+  const body = { message: `Guardar PDF de cotización externa ${codigo}`, content: pdfBase64 };
+  if (shaExistente) body.sha = shaExistente;
+
+  const resp = await fetch(
+    `https://api.github.com/repos/${OWNER}/${REPO}/contents/${ruta}`,
+    {
+      method: "PUT",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${githubToken}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+  if (!resp.ok) {
+    const detalle = await resp.text();
+    throw new Error(`No se pudo guardar el PDF de ${codigo}: ${resp.status} ${detalle}`);
+  }
+}
+
+async function leerHistorial(githubToken) {
+  const resp = await fetch(
+    `https://api.github.com/repos/${OWNER}/${REPO}/contents/${HISTORIAL_FILE}`,
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${githubToken}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    }
+  );
+  if (resp.status === 404) return { historial: [], sha: null };
+  if (!resp.ok) throw new Error(`No se pudo leer ${HISTORIAL_FILE}: ${resp.status}`);
+  const data = await resp.json();
+  const contenido = Buffer.from(data.content, "base64").toString("utf-8");
+  return { historial: JSON.parse(contenido || "[]"), sha: data.sha };
+}
+
+async function guardarHistorial(githubToken, historial, sha, mensajeCommit) {
+  const contenidoBase64 = Buffer.from(JSON.stringify(historial, null, 2), "utf-8").toString("base64");
+  const body = { message: mensajeCommit, content: contenidoBase64 };
+  if (sha) body.sha = sha;
+
+  const resp = await fetch(
+    `https://api.github.com/repos/${OWNER}/${REPO}/contents/${HISTORIAL_FILE}`,
+    {
+      method: "PUT",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${githubToken}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+  if (!resp.ok) {
+    const detalle = await resp.text();
+    throw new Error(`No se pudo guardar ${HISTORIAL_FILE}: ${resp.status} ${detalle}`);
+  }
+}
+
+// Esquema confirmado contra registrar_cotizacion_enviada() en
+// motor_licitaciones.py: codigo, resultado, fecha_resultado, nombre, rubro,
+// score, decision, fecha_envio. revisar_resultados_pendientes() recorre todo
+// registro con resultado "pendiente" y consulta Mercado Público por su
+// código — como las cotizaciones externas también tienen un código real de
+// Mercado Público, ese seguimiento automático (ganada/perdida) les funciona
+// igual, sin cambiar nada más del motor. Se agregan además "origen",
+// "organismo", "monto_total" y "registrado_por" como campos extra de
+// trazabilidad (no interfieren con el motor, y el dashboard los puede leer
+// para mostrar el badge "Externa").
+function armarEntradaHistorialExterna(datos, numeroWhatsapp) {
+  return {
+    codigo: datos.codigo,
+    resultado: "pendiente",
+    fecha_resultado: null,
+    nombre: datos.nombre_proyecto,
+    rubro: null,
+    score: null,
+    decision: "aprobada",
+    fecha_envio: new Date().toISOString(),
+    origen: "externa",
+    organismo: datos.organismo,
+    monto_total: datos.monto_total,
+    numero_correlativo: datos.numero_correlativo || null,
+    registrado_por: numeroWhatsapp,
+  };
+}
+
+async function registrarCotizacionExterna(githubToken, datos, pdfBase64, numeroWhatsapp) {
+  await guardarPDFExterno(githubToken, datos.codigo, pdfBase64);
+  const { historial, sha } = await leerHistorial(githubToken);
+
+  // Upsert por código — igual que registrar_cotizacion_enviada() en Python.
+  const nuevaEntrada = armarEntradaHistorialExterna(datos, numeroWhatsapp);
+  const idx = historial.findIndex((r) => r.codigo === datos.codigo);
+  if (idx >= 0) {
+    const resultadoPrevio = historial[idx].resultado;
+    historial[idx] = { ...historial[idx], ...nuevaEntrada };
+    if (resultadoPrevio === "ganada" || resultadoPrevio === "perdida") {
+      historial[idx].resultado = resultadoPrevio;
+    }
+  } else {
+    historial.push(nuevaEntrada);
+  }
+
+  await guardarHistorial(
+    githubToken, historial, sha,
+    `Registrar cotización externa ${datos.codigo} (recibida por WhatsApp)`
+  );
+}
+
+function textoResumenCotizacion(datos) {
+  const monto = datos.monto_total
+    ? `$${Math.round(datos.monto_total).toLocaleString("es-CL")}`
+    : "(no detectado)";
+  return `📄 Leí esta cotización:\n\n`
+    + `*Código MP:* ${datos.codigo || "(no detectado)"}\n`
+    + `*Organismo:* ${datos.organismo || "(no detectado)"}\n`
+    + `*Proyecto:* ${datos.nombre_proyecto || "(no detectado)"}\n`
+    + `*Monto total:* ${monto}\n\n`
+    + `¿Está todo correcto?`;
+}
+
+// Manda el resumen con botones interactivos "Confirmar" / "Corregir".
+async function enviarConfirmacionExterna(whatsappToken, whatsappPhoneId, numero, datos) {
+  if (!whatsappToken || !whatsappPhoneId) return;
+  const codigoSeguro = datos.codigo || "sc";
+  const payload = {
+    messaging_product: "whatsapp",
+    to: numero,
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: { text: textoResumenCotizacion(datos) },
+      action: {
+        buttons: [
+          { type: "reply", reply: { id: `confext_si_${codigoSeguro}`, title: "✅ Confirmar" } },
+          { type: "reply", reply: { id: `confext_no_${codigoSeguro}`, title: "✏️ Corregir" } },
+        ],
+      },
+    },
+  };
+  try {
+    const resp = await fetch(
+      `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${whatsappPhoneId}/messages`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${whatsappToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }
+    );
+    if (!resp.ok) {
+      console.error(`Error mandando confirmación externa a ${numero}: ${resp.status} ${await resp.text()}`);
+    }
+  } catch (err) {
+    console.error(`Excepción mandando confirmación externa a ${numero}:`, err);
+  }
+}
+
+// ============================================================================
+// FIN — COTIZACIONES EXTERNAS
+// ============================================================================
+
 export default async function handler(req, res) {
   // --- Verificación del webhook (Meta llama esto solo al configurarlo) ---
   if (req.method === "GET") {
@@ -612,6 +963,8 @@ export default async function handler(req, res) {
           } else if (buttonId.startsWith("descartar_")) {
             botonLicitacion = { accion: "descartar", codigo: buttonId.slice(10) };
           }
+        } else if (tipo === "document") {
+          texto = "(documento adjunto)";
         }
 
         console.log(`Mensaje entrante de ${numero} (${tipo}): ${texto}`);
@@ -653,6 +1006,98 @@ export default async function handler(req, res) {
           }
 
           await dispararEventoCotizacion(githubToken, tipoEvento, botonLicitacion.codigo, numero);
+          return res.status(200).send("OK");
+        }
+
+        // --- Confirmación / corrección de una cotización externa pendiente -
+        if (tipo === "interactive" && githubToken) {
+          const buttonId = mensaje.interactive?.button_reply?.id || "";
+          if (buttonId.startsWith("confext_si_") || buttonId.startsWith("confext_no_")) {
+            const { estado: estadoExt, sha: shaExt } = await leerEstado(githubToken);
+            const pendiente = estadoExt[numero]?.cotizacion_externa_pendiente;
+            if (!pendiente) {
+              await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero,
+                "No tengo ninguna cotización externa pendiente de confirmar.");
+              return res.status(200).send("OK");
+            }
+
+            if (buttonId.startsWith("confext_si_")) {
+              try {
+                const urlMedia = await obtenerUrlMedia(whatsappToken, pendiente.media_id);
+                const pdfBase64 = await descargarMediaBase64(whatsappToken, urlMedia);
+                await registrarCotizacionExterna(githubToken, pendiente.datos, pdfBase64, numero);
+                await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero,
+                  `✅ Registrada: ${pendiente.datos.codigo}. Quedó guardada con respaldo y entra al seguimiento normal.`);
+              } catch (err) {
+                console.error("Error registrando cotización externa:", err);
+                await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero,
+                  "Hubo un problema guardando la cotización. Intenta de nuevo en un momento.");
+              }
+              delete estadoExt[numero].cotizacion_externa_pendiente;
+              await guardarEstado(githubToken, estadoExt, shaExt);
+            } else {
+              await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero,
+                "Ok, dime qué está mal (ej. \"el código es 758-391-COT26\" o \"el monto es 2.100.000\").");
+              estadoExt[numero].cotizacion_externa_pendiente.esperando_correccion = true;
+              await guardarEstado(githubToken, estadoExt, shaExt);
+            }
+            return res.status(200).send("OK");
+          }
+        }
+
+        // --- Corrección en texto libre de una cotización externa pendiente -
+        if (tipo === "text" && githubToken && anthropicKey) {
+          const { estado: estadoCorr, sha: shaCorr } = await leerEstado(githubToken);
+          const pendienteCorr = estadoCorr[numero]?.cotizacion_externa_pendiente;
+          if (pendienteCorr?.esperando_correccion) {
+            const datosCorregidos = await corregirDatosCotizacion(anthropicKey, pendienteCorr.datos, texto);
+            estadoCorr[numero].cotizacion_externa_pendiente = {
+              ...pendienteCorr, datos: datosCorregidos, esperando_correccion: false,
+            };
+            await guardarEstado(githubToken, estadoCorr, shaCorr);
+            await enviarConfirmacionExterna(whatsappToken, whatsappPhoneId, numero, datosCorregidos);
+            return res.status(200).send("OK");
+          }
+        }
+
+        // --- PDF nuevo entrante: cotización creada por fuera del bot -------
+        if (tipo === "document" && githubToken && anthropicKey) {
+          const mimeType = mensaje.document?.mime_type || "";
+          const mediaId = mensaje.document?.id;
+
+          if (mimeType !== "application/pdf" || !mediaId) {
+            await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero,
+              "Solo puedo procesar archivos PDF por ahora.");
+            return res.status(200).send("OK");
+          }
+
+          await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero,
+            "📎 Recibido, dame un momento mientras leo la cotización...");
+
+          try {
+            const urlMedia = await obtenerUrlMedia(whatsappToken, mediaId);
+            const pdfBase64 = await descargarMediaBase64(whatsappToken, urlMedia);
+            const datos = await extraerDatosCotizacion(anthropicKey, pdfBase64);
+
+            if (!datos || datos.es_cotizacion === false) {
+              await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero,
+                `No pude reconocer esto como una cotización${datos?.motivo ? `: ${datos.motivo}` : "."}`);
+              return res.status(200).send("OK");
+            }
+
+            const { estado: estadoDoc, sha: shaDoc } = await leerEstado(githubToken);
+            estadoDoc[numero] = {
+              ...(estadoDoc[numero] || {}),
+              cotizacion_externa_pendiente: { media_id: mediaId, datos },
+            };
+            await guardarEstado(githubToken, estadoDoc, shaDoc);
+
+            await enviarConfirmacionExterna(whatsappToken, whatsappPhoneId, numero, datos);
+          } catch (err) {
+            console.error("Error procesando PDF de cotización externa:", err);
+            await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero,
+              "Hubo un problema leyendo el PDF. Intenta de nuevo en un momento.");
+          }
           return res.status(200).send("OK");
         }
 
@@ -838,48 +1283,6 @@ export default async function handler(req, res) {
               "cotizacion_activa": nuevoCodigoActivo,
             };
             estado[numero] = nuevaEntrada;
-            await guardarEstado(githubToken, estado, sha);
-            return res.status(200).send("OK");
-          }
-
-          // --- Texto libre SIN cotización activa ---------------------
-          // Antes esto caía en silencio al bloque genérico de abajo. Ahora
-          // al menos respondemos algo: si tiene cotizaciones abiertas pero
-          // ninguna en foco, se las mostramos (y si el mensaje menciona un
-          // código que calza con una de ellas, la ponemos en foco). Si no
-          // tiene ninguna abierta, se lo decimos en vez de dejarlo en visto.
-          if (!codigoActivo && tipo === "text" && anthropicKey) {
-            const cotizacionesAbiertas = entradaPrevia.cotizaciones_abiertas || [];
-            let textoRespuesta;
-            let nuevoCodigoActivo = null;
-
-            if (cotizacionesAbiertas.length === 0) {
-              textoRespuesta = "No tienes ninguna cotización abierta ahora mismo. "
-                + "Cuando llegue una licitación nueva, respóndeme \"ver\" para empezar a cotizarla.";
-            } else {
-              const textoNorm = normalizarTexto(texto);
-              const coincidencia = cotizacionesAbiertas.find(
-                (c) => textoNorm.includes(normalizarTexto(c.codigo))
-              );
-              if (coincidencia) {
-                nuevoCodigoActivo = coincidencia.codigo;
-                textoRespuesta = `✅ Foco en: ${coincidencia.nombre} (${coincidencia.codigo}). `
-                  + `Ahora tus mensajes van a editar esta cotización.`;
-              } else {
-                textoRespuesta = describirListaCotizaciones(cotizacionesAbiertas, null);
-              }
-            }
-
-            await enviarMensajeWhatsApp(whatsappToken, whatsappPhoneId, numero, textoRespuesta);
-
-            const nuevaEntradaSinFoco = {
-              ...entradaPrevia,
-              "última_interacción": ahoraISO,
-              "último_mensaje": texto,
-              "notificaciones_activas": true,
-              "cotizacion_activa": nuevoCodigoActivo,
-            };
-            estado[numero] = nuevaEntradaSinFoco;
             await guardarEstado(githubToken, estado, sha);
             return res.status(200).send("OK");
           }
